@@ -29,10 +29,13 @@ class _StopDetailPageState extends State<StopDetailPage> {
   final PageController _trackPageController =
       PageController(viewportFraction: 0.9);
 
+  static const double _clusterRadiusMeters = 300;
+
   bool _isLoading = false;
   String? _error;
   DateTime? _lastUpdatedAt;
   TransitStop? _selectedStop;
+  List<TransitStop> _clusterStops = <TransitStop>[];
   List<_RouteTrackInfo> _tracks = <_RouteTrackInfo>[];
   String? _selectedTrackKey;
   int _focusedTrackPage = 0;
@@ -123,7 +126,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
 
     try {
       final allStops = await _apiService.fetchAllStopsCatalog();
-        final match =
+      final match =
           allStops.where((stop) => stop.stopId == widget.favoriteStop.stopId);
       final selected = match.isNotEmpty
           ? match.first
@@ -135,7 +138,9 @@ class _StopDetailPageState extends State<StopDetailPage> {
               routes: const <String>[],
             );
 
-      final routeCodes = selected.routes.take(6).toList(growable: false);
+      final clusterStops = _buildNearbyStopCluster(allStops, selected);
+
+      final routeCodes = _collectClusterRouteCodes(clusterStops);
       final tracks = <_RouteTrackInfo>[];
       var paletteIndex = 0;
 
@@ -155,7 +160,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
               routeCode: routeCode,
               direction: direction,
               color: _palette[paletteIndex % _palette.length],
-              selectedStop: selected,
+              selectedStops: clusterStops,
             );
             paletteIndex++;
 
@@ -182,6 +187,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
 
       setState(() {
         _selectedStop = selected;
+        _clusterStops = clusterStops;
         _tracks = tracks;
         if (tracks.isEmpty) {
           _selectedTrackKey = null;
@@ -234,7 +240,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
     required String routeCode,
     required String direction,
     required Color color,
-    required TransitStop selectedStop,
+    required List<TransitStop> selectedStops,
   }) {
     final pathList = KentkartPathUtils.asList(payload['pathList']);
     if (pathList.isEmpty) {
@@ -251,22 +257,21 @@ class _StopDetailPageState extends State<StopDetailPage> {
         continue;
       }
 
+      final busStopList = KentkartPathUtils.asList(path['busStopList']);
+      final matchedStop = _matchClusterStop(busStopList, selectedStops);
+      if (matchedStop == null) {
+        // Ters direction karismasini engelle: secili durak bu yonde yoksa ele.
+        continue;
+      }
       final stopPointIndex = GeoMathUtils.nearestPointIndex(
         points,
-        selectedStop.latitude,
-        selectedStop.longitude,
+        matchedStop.stop.latitude,
+        matchedStop.stop.longitude,
       );
       if (stopPointIndex < 0 || stopPointIndex >= points.length - 1) {
         continue;
       }
-
-      final busStopList = KentkartPathUtils.asList(path['busStopList']);
-      final selectedStopIdx =
-          KentkartPathUtils.findStopIndex(busStopList, selectedStop.stopId);
-      if (selectedStopIdx < 0) {
-        // Ters direction karismasini engelle: secili durak bu yonde yoksa ele.
-        continue;
-      }
+      final selectedStopIdx = matchedStop.index;
       final fromStopName = selectedStopIdx > 0
           ? KentkartPathUtils.readString(
               busStopList[selectedStopIdx - 1] as Map<String, dynamic>,
@@ -307,8 +312,8 @@ class _StopDetailPageState extends State<StopDetailPage> {
       final approachMeters = GeoMathUtils.polylineMeters(approachPoints);
       final eta = _estimateEtaForStop(
         buses: upcomingBuses,
-        stopLat: selectedStop.latitude,
-        stopLon: selectedStop.longitude,
+        stopLat: matchedStop.stop.latitude,
+        stopLon: matchedStop.stop.longitude,
       );
 
       return _RouteTrackInfo(
@@ -329,6 +334,76 @@ class _StopDetailPageState extends State<StopDetailPage> {
       );
     }
 
+    return null;
+  }
+
+  List<TransitStop> _buildNearbyStopCluster(
+    List<TransitStop> allStops,
+    TransitStop anchor,
+  ) {
+    final cluster = allStops
+        .where(
+          (stop) => _distanceMeters(
+                anchor.latitude,
+                anchor.longitude,
+                stop.latitude,
+                stop.longitude,
+              ) <=
+              _clusterRadiusMeters,
+        )
+        .toList(growable: false);
+
+    if (cluster.isEmpty) {
+      return <TransitStop>[anchor];
+    }
+
+    cluster.sort((a, b) {
+      final distanceCompare = _distanceMeters(
+        anchor.latitude,
+        anchor.longitude,
+        a.latitude,
+        a.longitude,
+      ).compareTo(
+        _distanceMeters(
+          anchor.latitude,
+          anchor.longitude,
+          b.latitude,
+          b.longitude,
+        ),
+      );
+      if (distanceCompare != 0) {
+        return distanceCompare;
+      }
+      return a.stopName.compareTo(b.stopName);
+    });
+
+    return cluster;
+  }
+
+  List<String> _collectClusterRouteCodes(List<TransitStop> clusterStops) {
+    final routeCodes = <String>[];
+    for (final stop in clusterStops) {
+      for (final route in stop.routes) {
+        final normalized = route.trim();
+        if (normalized.isEmpty || routeCodes.contains(normalized)) {
+          continue;
+        }
+        routeCodes.add(normalized);
+      }
+    }
+    return routeCodes.take(10).toList(growable: false);
+  }
+
+  ({TransitStop stop, int index})? _matchClusterStop(
+    List<dynamic> busStopList,
+    List<TransitStop> clusterStops,
+  ) {
+    for (final stop in clusterStops) {
+      final index = KentkartPathUtils.findStopIndex(busStopList, stop.stopId);
+      if (index >= 0) {
+        return (stop: stop, index: index);
+      }
+    }
     return null;
   }
 
@@ -470,7 +545,11 @@ class _StopDetailPageState extends State<StopDetailPage> {
     }
 
     final stopPoint = LatLng(_selectedStop!.latitude, _selectedStop!.longitude);
-    final allPoints = <LatLng>[stopPoint];
+    final allPoints = _clusterStops.isEmpty
+        ? <LatLng>[stopPoint]
+        : _clusterStops
+            .map((stop) => LatLng(stop.latitude, stop.longitude))
+            .toList(growable: true);
     final selectedTrack = _tracks.isEmpty
         ? null
         : _tracks.firstWhere(
@@ -503,6 +582,9 @@ class _StopDetailPageState extends State<StopDetailPage> {
   @override
   Widget build(BuildContext context) {
     final stop = _selectedStop;
+    final clusterStops = _clusterStops.isEmpty && stop != null
+        ? <TransitStop>[stop]
+        : _clusterStops;
     final sortedTracks = List<_RouteTrackInfo>.from(_tracks)
       ..sort((a, b) {
         final distanceCompare = a.approachMeters.compareTo(b.approachMeters);
@@ -521,9 +603,11 @@ class _StopDetailPageState extends State<StopDetailPage> {
         ? const <_RouteTrackInfo>[]
         : <_RouteTrackInfo>[selectedTrack];
     final visibleRouteCodes = visibleTracks.map((track) => track.routeCode).toSet();
-    final remainingRoutes = (stop?.routes ?? const <String>[])
+    final remainingRoutes = clusterStops
+      .expand((item) => item.routes)
         .where((route) => route.trim().isNotEmpty && !visibleRouteCodes.contains(route))
-        .toList(growable: false);
+      .toSet()
+      .toList(growable: false);
     final center = stop == null
         ? LatLng(widget.favoriteStop.latitude, widget.favoriteStop.longitude)
         : LatLng(stop.latitude, stop.longitude);
@@ -582,15 +666,23 @@ class _StopDetailPageState extends State<StopDetailPage> {
                 if (stop != null)
                   MarkerLayer(
                     markers: [
-                      Marker(
-                        point: LatLng(stop.latitude, stop.longitude),
-                        width: 44,
-                        height: 44,
-                        child: const Icon(
-                          Icons.place,
-                          color: Color(0xFFB63519),
-                          size: 34,
-                        ),
+                      ...clusterStops.asMap().entries.map(
+                        (entry) {
+                          final item = entry.value;
+                          final isPrimary = item.stopId == stop.stopId;
+                          return Marker(
+                            point: LatLng(item.latitude, item.longitude),
+                            width: isPrimary ? 44 : 34,
+                            height: isPrimary ? 44 : 34,
+                            child: Icon(
+                              isPrimary ? Icons.place : Icons.adjust,
+                              color: isPrimary
+                                  ? const Color(0xFFB63519)
+                                  : const Color(0xFF1C7A47),
+                              size: isPrimary ? 34 : 22,
+                            ),
+                          );
+                        },
                       ),
                     ],
                   ),
@@ -662,6 +754,16 @@ class _StopDetailPageState extends State<StopDetailPage> {
                 ),
               ),
             ),
+          if (clusterStops.isNotEmpty)
+            Positioned(
+              top: _error != null ? 72 : 12,
+              left: 12,
+              right: 12,
+              child: _NearbyStopsFloatingCard(
+                anchorName: stop?.stopName ?? widget.favoriteStop.stopName,
+                clusterStops: clusterStops,
+              ),
+            ),
           if (sortedTracks.isNotEmpty || remainingRoutes.isNotEmpty)
             Positioned(
               left: 12,
@@ -695,7 +797,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         child: _TrackFloatingCard(
                           track: track,
-                          stopName: widget.favoriteStop.stopName,
+                          stopName: stop?.stopName ?? widget.favoriteStop.stopName,
                           updatedAt: _lastUpdatedAt,
                           isSelected: track.key == selectedTrack?.key,
                         ),
@@ -711,6 +813,80 @@ class _StopDetailPageState extends State<StopDetailPage> {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _NearbyStopsFloatingCard extends StatelessWidget {
+  const _NearbyStopsFloatingCard({
+    required this.anchorName,
+    required this.clusterStops,
+  });
+
+  final String anchorName;
+  final List<TransitStop> clusterStops;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 3,
+      borderRadius: BorderRadius.circular(14),
+      color: Colors.white.withValues(alpha: 0.96),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${clusterStops.length} durak birlestirildi',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              anchorName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: const Color(0xFF3D4857),
+                    fontWeight: FontWeight.w600,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: clusterStops
+                    .map(
+                      (stop) => Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF5F7FA),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: const Color(0xFFE2E7F0)),
+                          ),
+                          child: Text(
+                            stop.stopName,
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
