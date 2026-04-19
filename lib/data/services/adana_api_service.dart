@@ -165,30 +165,64 @@ class AdanaApiService {
     required String displayRouteCode,
     required String direction,
   }) async {
-    if (!AppEnv.hasKentkartToken) {
+    final tokenCandidates = <String>[];
+    if (AppEnv.hasKentkartToken) {
+      tokenCandidates.add(AppEnv.kentkartToken);
+    }
+    try {
+      final apiToken = await ensureToken();
+      if (apiToken.isNotEmpty && !tokenCandidates.contains(apiToken)) {
+        tokenCandidates.add(apiToken);
+      }
+    } catch (_) {
+      // If API token fails, still try the configured Kentkart token candidate.
+    }
+
+    if (tokenCandidates.isEmpty) {
       return <String, dynamic>{
         'pathList': <dynamic>[],
-        'note': 'KENTKART_TOKEN tanimli degil.',
+        'note': 'Kentkart token bulunamadi.',
       };
     }
 
-    final uri = Uri.parse(kentkartPathInfoUrl).replace(queryParameters: {
-      'region': _kentkartRegion,
-      'lang': _kentkartLang,
-      'authType': _kentkartAuthType,
-      'token': AppEnv.kentkartToken,
-      'displayRouteCode': displayRouteCode,
-      'resultType': _kentkartResultType,
-      'direction': direction,
-    });
+    Exception? lastError;
+    for (final token in tokenCandidates) {
+      try {
+        final uri = Uri.parse(kentkartPathInfoUrl).replace(queryParameters: {
+          'region': _kentkartRegion,
+          'lang': _kentkartLang,
+          'authType': _kentkartAuthType,
+          'token': token,
+          'displayRouteCode': displayRouteCode,
+          'resultType': _kentkartResultType,
+          'direction': direction,
+        });
 
-    final response = await _httpClient.get(uri, headers: {
-      'Accept': 'application/json',
-      'User-Agent':
-          'Dalvik/2.1.0 (Linux; U; Android 11; sdk_gphone_x86 Build/RSR1.240422.006)',
-    });
+        final response = await _httpClient.get(uri, headers: {
+          'Accept': 'application/json',
+          'User-Agent':
+              'Dalvik/2.1.0 (Linux; U; Android 11; sdk_gphone_x86 Build/RSR1.240422.006)',
+        });
 
-    return _decodeJson(response);
+        final parsed = _decodeJson(response);
+        if (parsed.containsKey('pathList')) {
+          return parsed;
+        }
+        lastError = Exception('PathInfo yanitinda pathList yok.');
+      } catch (error) {
+        if (error is Exception) {
+          lastError = error;
+        } else {
+          lastError = Exception(error.toString());
+        }
+      }
+    }
+
+    if (lastError != null) {
+      throw lastError;
+    }
+
+    return <String, dynamic>{'pathList': <dynamic>[]};
   }
 
   Future<List<TransitStop>> fetchStopsForDisplayRouteCode(

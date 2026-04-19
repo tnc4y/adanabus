@@ -34,29 +34,62 @@ class _StopDetailPageState extends State<StopDetailPage> {
   List<_RouteTrackInfo> _tracks = <_RouteTrackInfo>[];
   String? _selectedTrackKey;
   Timer? _refreshTimer;
+  Timer? _warmupRetryTimer;
+  int _warmupRetryCount = 0;
 
   static const double _etaMetersPerMinute = 320;
   static const List<Color> _palette = <Color>[
-    Color(0xFF164B9D),
-    Color(0xFFE65100),
-    Color(0xFF2E7D32),
-    Color(0xFF6A1B9A),
-    Color(0xFFC62828),
-    Color(0xFF00838F),
-    Color(0xFF9E9D24),
+    Color(0xFF0057D9),
+    Color(0xFF009E73),
+    Color(0xFFF0A202),
+    Color(0xFF7B1FA2),
+    Color(0xFF00ACC1),
+    Color(0xFF8D6E63),
+    Color(0xFF3949AB),
+    Color(0xFF43A047),
+    Color(0xFFFB8C00),
+    Color(0xFF6D4C41),
+    Color(0xFF1E88E5),
+    Color(0xFF5E35B1),
   ];
 
   @override
   void initState() {
     super.initState();
-    _loadStopDetail();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
+      }
+      _loadStopDetail();
+      _scheduleWarmupRetryIfNeeded();
+    });
     _startAutoRefresh();
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _warmupRetryTimer?.cancel();
     super.dispose();
+  }
+
+  void _scheduleWarmupRetryIfNeeded() {
+    if (_warmupRetryCount >= 3) {
+      return;
+    }
+    _warmupRetryTimer?.cancel();
+    final delaySeconds = 2 + _warmupRetryCount;
+    _warmupRetryTimer = Timer(Duration(seconds: delaySeconds), () {
+      if (!mounted || _isLoading) {
+        return;
+      }
+      if (_tracks.isNotEmpty) {
+        return;
+      }
+      _warmupRetryCount++;
+      _loadStopDetail();
+      _scheduleWarmupRetryIfNeeded();
+    });
   }
 
   void _startAutoRefresh() {
@@ -64,6 +97,9 @@ class _StopDetailPageState extends State<StopDetailPage> {
     _refreshTimer = Timer.periodic(
       const Duration(seconds: 20),
       (_) {
+        if (!mounted) {
+          return;
+        }
         if (!_isLoading) {
           _loadStopDetail();
         }
@@ -72,6 +108,10 @@ class _StopDetailPageState extends State<StopDetailPage> {
   }
 
   Future<void> _loadStopDetail() async {
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _error = null;
@@ -124,6 +164,10 @@ class _StopDetailPageState extends State<StopDetailPage> {
         }
       }
 
+      if (!mounted) {
+        return;
+      }
+
       setState(() {
         _selectedStop = selected;
         _tracks = tracks;
@@ -136,6 +180,13 @@ class _StopDetailPageState extends State<StopDetailPage> {
         _lastUpdatedAt = DateTime.now();
       });
 
+      if (tracks.isEmpty) {
+        _scheduleWarmupRetryIfNeeded();
+      } else {
+        _warmupRetryCount = 0;
+        _warmupRetryTimer?.cancel();
+      }
+
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           return;
@@ -143,6 +194,9 @@ class _StopDetailPageState extends State<StopDetailPage> {
         _fitMap();
       });
     } catch (error) {
+      if (!mounted) {
+        return;
+      }
       setState(() {
         _error = error.toString();
       });
@@ -177,17 +231,14 @@ class _StopDetailPageState extends State<StopDetailPage> {
         continue;
       }
 
-      final nearestPointIndex = GeoMathUtils.nearestPointIndex(
+      final stopPointIndex = GeoMathUtils.nearestPointIndex(
         points,
         selectedStop.latitude,
         selectedStop.longitude,
       );
-      if (nearestPointIndex < 0 || nearestPointIndex >= points.length - 1) {
+      if (stopPointIndex < 0 || stopPointIndex >= points.length - 1) {
         continue;
       }
-
-      final remainingPoints = points.sublist(nearestPointIndex);
-      final totalRemainingMeters = GeoMathUtils.polylineMeters(remainingPoints);
 
       final busStopList = KentkartPathUtils.asList(path['busStopList']);
       final selectedStopIdx =
@@ -212,12 +263,30 @@ class _StopDetailPageState extends State<StopDetailPage> {
           : '';
 
       final buses = KentkartPathUtils.extractBuses(path, routeCode, direction);
-      if (buses.isEmpty) {
+      final upcomingBuses = _filterUpcomingBuses(
+        buses: buses,
+        points: points,
+        stopPointIndex: stopPointIndex,
+      );
+      if (upcomingBuses.isEmpty) {
         // Canli arac olmayan hatlari cizme.
         continue;
       }
+      final primaryBus = _selectPrimaryBus(
+        buses: upcomingBuses,
+        points: points,
+        stopPointIndex: stopPointIndex,
+      );
+
+      final approachPoints = _buildApproachPoints(
+        points: points,
+        bus: primaryBus,
+        stopPointIndex: stopPointIndex,
+      );
+      final afterStopPoints = points.sublist(stopPointIndex);
+      final approachMeters = GeoMathUtils.polylineMeters(approachPoints);
       final eta = _estimateEtaForStop(
-        buses: buses,
+        buses: upcomingBuses,
         stopLat: selectedStop.latitude,
         stopLon: selectedStop.longitude,
       );
@@ -226,18 +295,113 @@ class _StopDetailPageState extends State<StopDetailPage> {
         routeCode: routeCode,
         direction: direction,
         color: color,
-        remainingPoints: remainingPoints,
-        remainingMeters: totalRemainingMeters,
+        approachPoints: approachPoints,
+        afterStopPoints: afterStopPoints,
+        remainingPoints: afterStopPoints,
+        approachMeters: approachMeters,
         fromStopName: fromStopName,
         toStopName: toStopName,
         nearestEtaMinutes: eta.$1,
         nextEtaMinutes: eta.$2,
-        liveBusCount: buses.length,
-        buses: buses,
+        liveBusCount: upcomingBuses.length,
+        buses: upcomingBuses,
+        primaryBus: primaryBus,
       );
     }
 
     return null;
+  }
+
+  BusVehicle? _selectPrimaryBus({
+    required List<BusVehicle> buses,
+    required List<LatLng> points,
+    required int stopPointIndex,
+  }) {
+    final orderedCandidates = <({BusVehicle bus, int pointIndex, double distance})>[];
+
+    for (final bus in buses) {
+      if (!bus.hasLocation) {
+        continue;
+      }
+      final pointIndex = GeoMathUtils.nearestPointIndex(
+        points,
+        bus.latitude!,
+        bus.longitude!,
+      );
+      if (pointIndex < 0) {
+        continue;
+      }
+      final distance = GeoMathUtils.distanceMeters(
+        bus.latitude!,
+        bus.longitude!,
+        points[pointIndex].latitude,
+        points[pointIndex].longitude,
+      );
+      orderedCandidates.add((bus: bus, pointIndex: pointIndex, distance: distance));
+    }
+
+    if (orderedCandidates.isEmpty) {
+      return null;
+    }
+
+    orderedCandidates.sort((a, b) {
+      final pointComparison = b.pointIndex.compareTo(a.pointIndex);
+      if (pointComparison != 0) {
+        return pointComparison;
+      }
+      return a.distance.compareTo(b.distance);
+    });
+
+    return orderedCandidates.first.bus;
+  }
+
+  List<BusVehicle> _filterUpcomingBuses({
+    required List<BusVehicle> buses,
+    required List<LatLng> points,
+    required int stopPointIndex,
+  }) {
+    final upcoming = <BusVehicle>[];
+    for (final bus in buses) {
+      if (!bus.hasLocation) {
+        continue;
+      }
+      final pointIndex = GeoMathUtils.nearestPointIndex(
+        points,
+        bus.latitude!,
+        bus.longitude!,
+      );
+      if (pointIndex < 0 || pointIndex > stopPointIndex) {
+        continue;
+      }
+      upcoming.add(bus);
+    }
+    return upcoming;
+  }
+
+  List<LatLng> _buildApproachPoints({
+    required List<LatLng> points,
+    required BusVehicle? bus,
+    required int stopPointIndex,
+  }) {
+    if (bus == null || !bus.hasLocation) {
+      return const <LatLng>[];
+    }
+
+    final busPointIndex = GeoMathUtils.nearestPointIndex(
+      points,
+      bus.latitude!,
+      bus.longitude!,
+    );
+    if (busPointIndex < 0 || busPointIndex > stopPointIndex) {
+      return const <LatLng>[];
+    }
+
+    final approach = <LatLng>[
+      LatLng(bus.latitude!, bus.longitude!),
+      ...points.sublist(busPointIndex, stopPointIndex + 1),
+    ];
+
+    return approach;
   }
 
   (int?, int?) _estimateEtaForStop({
@@ -294,7 +458,8 @@ class _StopDetailPageState extends State<StopDetailPage> {
             orElse: () => _tracks.first,
           );
     if (selectedTrack != null) {
-      allPoints.addAll(selectedTrack.remainingPoints.take(120));
+      allPoints.addAll(selectedTrack.approachPoints.take(120));
+      allPoints.addAll(selectedTrack.afterStopPoints.take(120));
     }
 
     if (allPoints.length < 2) {
@@ -360,14 +525,28 @@ class _StopDetailPageState extends State<StopDetailPage> {
                     ),
                     PolylineLayer(
                       polylines: visibleTracks
-                          .where((t) => t.remainingPoints.length > 1)
-                          .map(
-                            (t) => Polyline(
-                              points: t.remainingPoints,
-                              color: t.color.withValues(alpha: 0.9),
-                              strokeWidth: 4,
-                            ),
-                          )
+                          .expand((t) {
+                            final polylines = <Polyline>[];
+                            if (t.approachPoints.length > 1) {
+                              polylines.add(
+                                Polyline(
+                                  points: t.approachPoints,
+                                  color: const Color(0xFFD32F2F),
+                                  strokeWidth: 5,
+                                ),
+                              );
+                            }
+                            if (t.afterStopPoints.length > 1) {
+                              polylines.add(
+                                Polyline(
+                                  points: t.afterStopPoints,
+                                  color: t.color.withValues(alpha: 0.9),
+                                  strokeWidth: 4,
+                                ),
+                              );
+                            }
+                            return polylines;
+                          })
                           .toList(growable: false),
                     ),
                     if (stop != null)
@@ -531,7 +710,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
                               ),
                             ),
                             Text(
-                              '${(track.remainingMeters / 1000).toStringAsFixed(1)} km kalan',
+                              'Durağa ${(track.approachMeters / 1000).toStringAsFixed(1)} km',
                               style: const TextStyle(
                                 fontSize: 12,
                                 color: Color(0xFF555555),
@@ -582,27 +761,33 @@ class _RouteTrackInfo {
     required this.routeCode,
     required this.direction,
     required this.color,
+    required this.approachPoints,
+    required this.afterStopPoints,
     required this.remainingPoints,
-    required this.remainingMeters,
+    required this.approachMeters,
     required this.fromStopName,
     required this.toStopName,
     required this.nearestEtaMinutes,
     required this.nextEtaMinutes,
     required this.liveBusCount,
     required this.buses,
+    required this.primaryBus,
   });
 
   final String routeCode;
   final String direction;
   final Color color;
+  final List<LatLng> approachPoints;
+  final List<LatLng> afterStopPoints;
   final List<LatLng> remainingPoints;
-  final double remainingMeters;
+  final double approachMeters;
   final String fromStopName;
   final String toStopName;
   final int? nearestEtaMinutes;
   final int? nextEtaMinutes;
   final int liveBusCount;
   final List<BusVehicle> buses;
+  final BusVehicle? primaryBus;
 
   String get key => '$routeCode|$direction|$toStopName';
 }
