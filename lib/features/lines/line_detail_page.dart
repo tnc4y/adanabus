@@ -694,7 +694,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
           Positioned(
             right: 14,
             bottom: 160,
-            child: LineDetailFloatingActions(
+            child: _LineDetailFloatingActions(
               onToggleDirection: _isLoading ? null : _toggleDirection,
               onOpenTimetable: _openTimetablePage,
               directionTooltip:
@@ -1359,4 +1359,43 @@ class _LineDetailPageState extends State<LineDetailPage> {
     _lastMapZoom = 13.2;
   }
 
+}
+
+class _LineDetailFloatingActions extends StatelessWidget {
+  const _LineDetailFloatingActions({
+    required this.onToggleDirection,
+    required this.onOpenTimetable,
+    required this.directionTooltip,
+  });
+
+  final VoidCallback? onToggleDirection;
+  final VoidCallback onOpenTimetable;
+  final String directionTooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 4,
+      borderRadius: BorderRadius.circular(14),
+      color: AppThemeUtils.getCardColor(context).withValues(alpha: 0.95),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              onPressed: onToggleDirection,
+              icon: const Icon(Icons.swap_horiz),
+              tooltip: directionTooltip,
+            ),
+            IconButton(
+              onPressed: onOpenTimetable,
+              icon: const Icon(Icons.schedule),
+              tooltip: 'Cikis saatleri',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

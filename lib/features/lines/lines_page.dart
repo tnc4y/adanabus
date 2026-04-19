@@ -214,8 +214,9 @@ class _LineTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final borderColor =
-        isSelected ? const Color(0xFF164B9D) : const Color(0xFFE1E5EC);
+    final borderColor = isSelected
+        ? AppThemeUtils.getAccentColor(context, 'blue')
+        : AppThemeUtils.getBorderColor(context);
 
     return InkWell(
       onTap: onTap,
@@ -223,7 +224,7 @@ class _LineTile extends StatelessWidget {
       child: Ink(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppThemeUtils.getCardColor(context),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: borderColor),
         ),
@@ -233,7 +234,7 @@ class _LineTile extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
-                color: const Color(0xFFEAF2FF),
+                color: AppThemeUtils.getSubtleBackgroundColor(context),
               ),
               child: Text(
                 option.displayRouteCode,

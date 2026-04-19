@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/theme_utils.dart';
 import '../../data/models/bus_vehicle.dart';
 import '../../data/services/adana_api_service.dart';
 import 'line_timetable_parser.dart';
@@ -288,7 +289,7 @@ class _LineTimetablePageState extends State<LineTimetablePage>
           Container(
             width: double.infinity,
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-            color: const Color(0xFFF4F7FC),
+            color: AppThemeUtils.getSubtleBackgroundColor(context),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -299,7 +300,11 @@ class _LineTimetablePageState extends State<LineTimetablePage>
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    const Icon(Icons.route, size: 16, color: Color(0xFF164B9D)),
+                    Icon(
+                      Icons.route,
+                      size: 16,
+                      color: AppThemeUtils.getAccentColor(context, 'blue'),
+                    ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
@@ -314,7 +319,9 @@ class _LineTimetablePageState extends State<LineTimetablePage>
                 const SizedBox(height: 4),
                 Text(
                   'Yon: $directionText${_sourceBusId == null ? '' : ' • Arac: $_sourceBusId'}',
-                  style: const TextStyle(fontSize: 12, color: Color(0xFF4C4C4C)),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppThemeUtils.getSecondaryTextColor(context),
+                      ),
                 ),
               ],
             ),
@@ -343,10 +350,10 @@ class _LineTimetablePageState extends State<LineTimetablePage>
                   ],
                 ),
                 if (_isLoading)
-                  const Positioned.fill(
+                  Positioned.fill(
                     child: ColoredBox(
-                      color: Color(0x66FFFFFF),
-                      child: Center(child: CircularProgressIndicator()),
+                      color: AppThemeUtils.getOverlayColor(context, 0.40),
+                      child: const Center(child: CircularProgressIndicator()),
                     ),
                   ),
                 if (_error != null)
@@ -356,7 +363,7 @@ class _LineTimetablePageState extends State<LineTimetablePage>
                     top: 12,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF1EE),
+                        color: AppThemeUtils.getDisabledColor(context),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Padding(
