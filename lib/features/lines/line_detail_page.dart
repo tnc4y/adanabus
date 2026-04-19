@@ -471,22 +471,108 @@ class _LineDetailPageState extends State<LineDetailPage> {
   @override
   Widget build(BuildContext context) {
     final center = _resolveRouteCenter();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final blue = AppThemeUtils.getAccentColor(context, 'blue');
+    final green = AppThemeUtils.getAccentColor(context, 'green');
+    final orange = AppThemeUtils.getAccentColor(context, 'orange');
 
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: Text(
-          '${widget.routeName} (${widget.routeCode})',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
+        backgroundColor: isDark
+            ? const Color(0xFF0F1722).withValues(alpha: 0.92)
+            : Colors.white.withValues(alpha: 0.92),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: Padding(
+          padding: const EdgeInsets.all(8),
+          child: GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Container(
+              decoration: BoxDecoration(
+                color: isDark
+                    ? const Color(0xFF1A2535)
+                    : const Color(0xFFF3F6FB),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.arrow_back_rounded, size: 20),
+            ),
           ),
         ),
-        centerTitle: true,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+              decoration: BoxDecoration(
+                color: blue.withValues(alpha: isDark ? 0.2 : 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                widget.routeCode,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: blue,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.routeName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppThemeUtils.getTextColor(context),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          // Direction badge
+          Container(
+            margin: const EdgeInsets.only(right: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: _currentDirection == '0'
+                  ? green.withValues(alpha: isDark ? 0.2 : 0.1)
+                  : orange.withValues(alpha: isDark ? 0.2 : 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              _currentDirection == '0' ? 'Gidiş' : 'Dönüş',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: _currentDirection == '0' ? green : orange,
+              ),
+            ),
+          ),
+          if (_stops.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(right: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppThemeUtils.getSubtleBackgroundColor(context),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${_stops.length} durak',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppThemeUtils.getSecondaryTextColor(context),
+                ),
+              ),
+            ),
+        ],
       ),
       body: Stack(
         children: [
+          // ── Map ──────────────────────────────────────────────────────
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
@@ -495,144 +581,155 @@ class _LineDetailPageState extends State<LineDetailPage> {
             ),
             children: [
               buildAppMapTileLayer(context),
+              // Route polyline
               PolylineLayer(
                 polylines: [
                   Polyline(
                     points: _pathPoints,
-                    color: AppThemeUtils.getAccentColor(context, 'blue'),
-                    strokeWidth: 4,
+                    color: blue,
+                    strokeWidth: 4.5,
+                    borderColor: blue.withValues(alpha: 0.2),
+                    borderStrokeWidth: 8,
                   ),
                 ],
               ),
+              // Stop markers
               MarkerLayer(
-                markers: _stops
-                    .map(
-                      (stop) {
-                        final isSelected = _selectedStop?.key == stop.key;
-                        return Marker(
-                          point: LatLng(stop.latitude, stop.longitude),
-                          width: 34,
-                          height: 34,
-                          child: GestureDetector(
-                            onTap: () {
-                              setState(() {
-                                _selectedStop = stop;
-                              });
-                            },
-                            child: Icon(
-                              Icons.location_on,
-                              color: isSelected
-                                  ? AppThemeUtils.getAccentColor(context, 'green')
-                                  : AppThemeUtils.getAccentColor(context, 'orange'),
-                              size: isSelected ? 28 : 24,
-                            ),
+                markers: _stops.map((stop) {
+                  final isSelected = _selectedStop?.key == stop.key;
+                  return Marker(
+                    point: LatLng(stop.latitude, stop.longitude),
+                    width: isSelected ? 36 : 22,
+                    height: isSelected ? 36 : 22,
+                    child: GestureDetector(
+                      onTap: () => setState(() => _selectedStop = stop),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        decoration: BoxDecoration(
+                          color: isSelected ? green : orange,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.white,
+                            width: isSelected ? 2.5 : 2,
                           ),
-                        );
-                      },
-                    )
-                    .toList(),
+                          boxShadow: [
+                            BoxShadow(
+                              color: (isSelected ? green : orange)
+                                  .withValues(alpha: 0.4),
+                              blurRadius: isSelected ? 8 : 4,
+                            ),
+                          ],
+                        ),
+                        child: isSelected
+                            ? const Icon(Icons.check_rounded,
+                                color: Colors.white, size: 16)
+                            : null,
+                      ),
+                    ),
+                  );
+                }).toList(),
               ),
+              // Bus markers
               MarkerLayer(
                 markers: _liveRouteBuses
                     .where((bus) => bus.hasLocation)
-                    .map(
-                      (bus) {
-                        final index = _liveRouteBuses.indexOf(bus);
-                        final isFocused = index == _focusedBusIndex;
-                        return Marker(
-                          point: LatLng(bus.latitude!, bus.longitude!),
-                          width: isFocused ? 50 : 44,
-                          height: isFocused ? 50 : 44,
-                          child: GestureDetector(
-                            onTap: () {
-                              if (!mounted) {
-                                return;
-                              }
-                              setState(() {
-                                _focusedBusIndex = index;
-                                _selectedStop = null;
-                              });
-                              if (_vehiclePageController.hasClients) {
-                                _vehiclePageController.animateToPage(
-                                  index,
-                                  duration: const Duration(milliseconds: 280),
-                                  curve: Curves.easeOutCubic,
-                                );
-                              }
-                              _focusSelectedVehicle();
-                            },
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: isFocused
-                                        ? AppThemeUtils.getAccentColor(context, 'green')
-                                        : AppThemeUtils.getAccentColor(context, 'blue'),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Text(
-                                    bus.id.isEmpty ? 'Bus' : bus.id,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                                Icon(
-                                  Icons.directions_bus,
-                                  color: isFocused
-                                      ? AppThemeUtils.getAccentColor(context, 'green')
-                                      : AppThemeUtils.getAccentColor(context, 'blue'),
-                                  size: isFocused ? 26 : 22,
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
+                    .map((bus) {
+                  final index = _liveRouteBuses.indexOf(bus);
+                  final isFocused = index == _focusedBusIndex;
+                  final busColor = isFocused ? green : blue;
+                  return Marker(
+                    point: LatLng(bus.latitude!, bus.longitude!),
+                    width: isFocused ? 56 : 46,
+                    height: isFocused ? 56 : 46,
+                    child: GestureDetector(
+                      onTap: () {
+                        if (!mounted) return;
+                        setState(() {
+                          _focusedBusIndex = index;
+                          _selectedStop = null;
+                        });
+                        if (_vehiclePageController.hasClients) {
+                          _vehiclePageController.animateToPage(
+                            index,
+                            duration: const Duration(milliseconds: 280),
+                            curve: Curves.easeOutCubic,
+                          );
+                        }
+                        _focusSelectedVehicle();
                       },
-                    )
-                    .toList(growable: false),
+                      child: AnimatedScale(
+                        scale: isFocused ? 1.0 : 0.85,
+                        duration: const Duration(milliseconds: 200),
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: busColor,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.white, width: 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: busColor.withValues(alpha: 0.45),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.directions_bus_rounded,
+                                  color: Colors.white, size: 16),
+                              if (bus.id.isNotEmpty)
+                                Text(
+                                  bus.id,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(growable: false),
               ),
+              // Departure time marker at first stop
               if (_departureTimeText != null && _stops.isNotEmpty)
                 MarkerLayer(
                   markers: [
                     Marker(
-                      point: LatLng(_stops.first.latitude, _stops.first.longitude),
-                      width: 164,
-                      height: 64,
+                      point:
+                          LatLng(_stops.first.latitude, _stops.first.longitude),
+                      width: 120,
+                      height: 52,
                       child: IgnorePointer(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
+                                  horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: AppThemeUtils.getAccentColor(context, 'green'),
-                                borderRadius: BorderRadius.circular(10),
+                                color: green,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: green.withValues(alpha: 0.35),
+                                    blurRadius: 6,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ],
                               ),
                               child: Text(
-                                'Cikis: $_departureTimeText',
+                                'Çıkış: $_departureTimeText',
                                 style: const TextStyle(
                                   color: Colors.white,
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
-                            ),
-                            const SizedBox(height: 2),
-                            Icon(
-                              Icons.play_circle_fill,
-                              color: AppThemeUtils.getAccentColor(context, 'green'),
-                              size: 24,
                             ),
                           ],
                         ),
@@ -642,6 +739,8 @@ class _LineDetailPageState extends State<LineDetailPage> {
                 ),
             ],
           ),
+
+          // ── Bottom panel ─────────────────────────────────────────────
           if (_selectedStop != null)
             Positioned(
               left: 12,
@@ -653,11 +752,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
                 currentRouteCode: widget.routeCode,
                 currentDirection: _currentDirection,
                 lastRefreshAt: _lastBusRefreshAt,
-                onClose: () {
-                  setState(() {
-                    _selectedStop = null;
-                  });
-                },
+                onClose: () => setState(() => _selectedStop = null),
               ),
             )
           else
@@ -668,14 +763,12 @@ class _LineDetailPageState extends State<LineDetailPage> {
               child: SizedBox(
                 height: 128,
                 child: _liveRouteBuses.isEmpty
-                  ? const LineDetailVehicleEmptyFloatingCard()
+                    ? const LineDetailVehicleEmptyFloatingCard()
                     : PageView.builder(
                         controller: _vehiclePageController,
                         itemCount: _liveRouteBuses.length,
                         onPageChanged: (index) {
-                          setState(() {
-                            _focusedBusIndex = index;
-                          });
+                          setState(() => _focusedBusIndex = index);
                           _focusSelectedVehicle();
                         },
                         itemBuilder: (context, index) {
@@ -691,37 +784,78 @@ class _LineDetailPageState extends State<LineDetailPage> {
                       ),
               ),
             ),
+
+          // ── Floating action buttons ──────────────────────────────────
           Positioned(
             right: 14,
             bottom: 160,
             child: _LineDetailFloatingActions(
+              isDark: isDark,
               onToggleDirection: _isLoading ? null : _toggleDirection,
               onOpenTimetable: _openTimetablePage,
-              directionTooltip:
-                  _currentDirection == '1' ? 'Gidise gec' : 'Donuse gec',
+              directionLabel: _currentDirection == '1' ? 'Gidişe Geç' : 'Dönüşe Geç',
             ),
           ),
+
+          // ── Loading overlay ──────────────────────────────────────────
           if (_isLoading)
             Positioned.fill(
               child: Container(
-                color: AppThemeUtils.getOverlayColor(context, 0.55),
+                color: Colors.black.withValues(alpha: 0.3),
                 alignment: Alignment.center,
-                child: const CircularProgressIndicator(),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: AppThemeUtils.getCardColor(context),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const CircularProgressIndicator(),
+                ),
               ),
             ),
+
+          // ── Error banner ─────────────────────────────────────────────
           if (_error != null)
             Positioned(
-              top: 12,
+              top: MediaQuery.of(context).padding.top + 70,
               left: 12,
               right: 12,
-              child: DecoratedBox(
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
                 decoration: BoxDecoration(
-                  color: AppThemeUtils.getDisabledColor(context),
-                  borderRadius: BorderRadius.circular(10),
+                  color: const Color(0xFFFFF1EE),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFFD0C8)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 8,
+                    ),
+                  ],
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Text(_error!),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline_rounded,
+                        color: Color(0xFFB63519), size: 17),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF7A2010),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => setState(() => _error = null),
+                      icon: const Icon(Icons.close_rounded,
+                          size: 16, color: Color(0xFFB63519)),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1363,35 +1497,89 @@ class _LineDetailPageState extends State<LineDetailPage> {
 
 class _LineDetailFloatingActions extends StatelessWidget {
   const _LineDetailFloatingActions({
+    required this.isDark,
     required this.onToggleDirection,
     required this.onOpenTimetable,
-    required this.directionTooltip,
+    required this.directionLabel,
   });
 
+  final bool isDark;
   final VoidCallback? onToggleDirection;
   final VoidCallback onOpenTimetable;
-  final String directionTooltip;
+  final String directionLabel;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      elevation: 4,
-      borderRadius: BorderRadius.circular(14),
-      color: AppThemeUtils.getCardColor(context).withValues(alpha: 0.95),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _Fab(
+          isDark: isDark,
+          icon: Icons.swap_vert_rounded,
+          label: directionLabel,
+          onTap: onToggleDirection,
+        ),
+        const SizedBox(height: 8),
+        _Fab(
+          isDark: isDark,
+          icon: Icons.schedule_rounded,
+          label: 'Tarifeler',
+          onTap: onOpenTimetable,
+        ),
+      ],
+    );
+  }
+}
+
+class _Fab extends StatelessWidget {
+  const _Fab({
+    required this.isDark,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  final bool isDark;
+  final IconData icon;
+  final String label;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isDark
+        ? const Color(0xFF1A2535).withValues(alpha: 0.95)
+        : Colors.white.withValues(alpha: 0.95);
+    final textColor = onTap != null
+        ? AppThemeUtils.getTextColor(context)
+        : AppThemeUtils.getSecondaryTextColor(context);
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.1),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
+          ],
+        ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            IconButton(
-              onPressed: onToggleDirection,
-              icon: const Icon(Icons.swap_horiz),
-              tooltip: directionTooltip,
-            ),
-            IconButton(
-              onPressed: onOpenTimetable,
-              icon: const Icon(Icons.schedule),
-              tooltip: 'Cikis saatleri',
+            Icon(icon, size: 17, color: textColor),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: textColor,
+              ),
             ),
           ],
         ),

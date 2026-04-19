@@ -614,166 +614,293 @@ class _StopDetailPageState extends State<StopDetailPage> {
         ? LatLng(widget.favoriteStop.latitude, widget.favoriteStop.longitude)
         : LatLng(stop.latitude, stop.longitude);
 
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final green = AppThemeUtils.getAccentColor(context, 'green');
+    final blue = AppThemeUtils.getAccentColor(context, 'blue');
+    final orange = AppThemeUtils.getAccentColor(context, 'orange');
+
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: Text(widget.favoriteStop.stopName),
+        backgroundColor: isDark
+            ? const Color(0xFF0F1722).withValues(alpha: 0.92)
+            : Colors.white.withValues(alpha: 0.92),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        leading: Padding(
+          padding: const EdgeInsets.all(8),
+          child: GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Container(
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF1A2535) : const Color(0xFFF3F6FB),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.arrow_back_rounded, size: 20),
+            ),
+          ),
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              widget.favoriteStop.stopName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+                color: AppThemeUtils.getTextColor(context),
+              ),
+            ),
+            Text(
+              'Durak #${widget.favoriteStop.stopId}',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: AppThemeUtils.getSecondaryTextColor(context),
+              ),
+            ),
+          ],
+        ),
         actions: [
-          IconButton(
-            onPressed: _isLoading ? null : _loadStopDetail,
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Yenile',
+          if (_tracks.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(right: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: green.withValues(alpha: isDark ? 0.2 : 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.directions_bus_rounded, size: 12, color: green),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${_tracks.length} hat',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: green,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: _isLoading ? null : _loadStopDetail,
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF1A2535) : const Color(0xFFF3F6FB),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  Icons.refresh_rounded,
+                  size: 18,
+                  color: _isLoading
+                      ? AppThemeUtils.getSecondaryTextColor(context)
+                      : AppThemeUtils.getTextColor(context),
+                ),
+              ),
+            ),
           ),
         ],
       ),
       body: Stack(
         children: [
+          // ── Map ───────────────────────────────────────────────────────
           Positioned.fill(
             child: FlutterMap(
               mapController: _mapController,
-              options: MapOptions(
-                initialCenter: center,
-                initialZoom: 14,
-              ),
+              options: MapOptions(initialCenter: center, initialZoom: 14),
               children: [
                 buildAppMapTileLayer(context),
+                // Route polylines
                 PolylineLayer(
-                  polylines: visibleTracks
-                      .expand((t) {
-                        final polylines = <Polyline>[];
-                        if (t.approachPoints.length > 1) {
-                          polylines.add(
-                            Polyline(
-                              points: t.approachPoints,
-                              color: const Color(0xFFD32F2F),
-                              strokeWidth: 5,
-                            ),
-                          );
-                        }
-                        if (t.afterStopPoints.length > 1) {
-                          polylines.add(
-                            Polyline(
-                              points: t.afterStopPoints,
-                              color: t.color.withValues(alpha: 0.9),
-                              strokeWidth: 4,
-                            ),
-                          );
-                        }
-                        return polylines;
-                      })
-                      .toList(growable: false),
+                  polylines: visibleTracks.expand((t) {
+                    final list = <Polyline>[];
+                    if (t.approachPoints.length > 1) {
+                      list.add(Polyline(
+                        points: t.approachPoints,
+                        color: const Color(0xFFE53935),
+                        strokeWidth: 5,
+                        borderColor: const Color(0xFFE53935).withValues(alpha: 0.2),
+                        borderStrokeWidth: 9,
+                      ));
+                    }
+                    if (t.afterStopPoints.length > 1) {
+                      list.add(Polyline(
+                        points: t.afterStopPoints,
+                        color: t.color.withValues(alpha: 0.85),
+                        strokeWidth: 4,
+                        borderColor: t.color.withValues(alpha: 0.15),
+                        borderStrokeWidth: 8,
+                      ));
+                    }
+                    return list;
+                  }).toList(growable: false),
                 ),
+                // Stop markers
                 if (stop != null)
                   MarkerLayer(
-                    markers: [
-                      ...clusterStops.asMap().entries.map(
-                        (entry) {
-                          final item = entry.value;
-                          final isPrimary = item.stopId == stop.stopId;
-                          return Marker(
-                            point: LatLng(item.latitude, item.longitude),
-                            width: isPrimary ? 44 : 34,
-                            height: isPrimary ? 44 : 34,
-                            child: Icon(
-                              isPrimary ? Icons.place : Icons.adjust,
-                              color: isPrimary
-                                  ? const Color(0xFFB63519)
-                                  : const Color(0xFF1C7A47),
-                              size: isPrimary ? 34 : 22,
-                            ),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                MarkerLayer(
-                  markers: visibleTracks
-                      .expand((track) => track.buses)
-                      .where((bus) => bus.hasLocation)
-                      .map(
-                        (bus) => Marker(
-                          point: LatLng(bus.latitude!, bus.longitude!),
-                          width: 44,
-                          height: 44,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 6,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF164B9D),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  bus.id.isEmpty ? 'Bus' : bus.id,
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                              ),
-                              const Icon(
-                                Icons.directions_bus,
-                                size: 22,
-                                color: Color(0xFF0B5A25),
+                    markers: clusterStops.map((item) {
+                      final isPrimary = item.stopId == stop.stopId;
+                      return Marker(
+                        point: LatLng(item.latitude, item.longitude),
+                        width: isPrimary ? 40 : 24,
+                        height: isPrimary ? 40 : 24,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: isPrimary ? orange : green,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: isPrimary ? 2.5 : 2),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (isPrimary ? orange : green).withValues(alpha: 0.4),
+                                blurRadius: isPrimary ? 10 : 4,
                               ),
                             ],
                           ),
+                          child: isPrimary
+                              ? const Icon(Icons.place_rounded, color: Colors.white, size: 20)
+                              : null,
                         ),
-                      )
+                      );
+                    }).toList(),
+                  ),
+                // Bus markers
+                MarkerLayer(
+                  markers: visibleTracks
+                      .expand((t) => t.buses)
+                      .where((bus) => bus.hasLocation)
+                      .map((bus) => Marker(
+                            point: LatLng(bus.latitude!, bus.longitude!),
+                            width: 50,
+                            height: 50,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: blue,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.white, width: 2),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: blue.withValues(alpha: 0.4),
+                                    blurRadius: 8,
+                                    offset: const Offset(0, 3),
+                                  ),
+                                ],
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const Icon(Icons.directions_bus_rounded,
+                                      color: Colors.white, size: 16),
+                                  if (bus.id.isNotEmpty)
+                                    Text(
+                                      bus.id,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 8,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ))
                       .toList(growable: false),
                 ),
               ],
             ),
           ),
+
+          // ── Loading overlay ─────────────────────────────────────────
           if (_isLoading)
             Positioned.fill(
               child: Container(
-                color: Colors.white.withValues(alpha: 0.35),
+                color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.15),
                 alignment: Alignment.center,
-                child: const CircularProgressIndicator(),
+                child: Container(
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: AppThemeUtils.getCardColor(context),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const CircularProgressIndicator(),
+                ),
               ),
             ),
+
+          // ── Error banner ────────────────────────────────────────────
           if (_error != null)
             Positioned(
-              top: 12,
+              top: MediaQuery.of(context).padding.top + 70,
               left: 12,
               right: 12,
-              child: DecoratedBox(
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
                 decoration: BoxDecoration(
-                  color: AppThemeUtils.getDisabledColor(context),
-                  borderRadius: BorderRadius.circular(10),
+                  color: const Color(0xFFFFF1EE),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFFD0C8)),
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Text(_error!),
+                child: Row(
+                  children: [
+                    const Icon(Icons.error_outline_rounded,
+                        color: Color(0xFFB63519), size: 17),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF7A2010),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => setState(() => _error = null),
+                      icon: const Icon(Icons.close_rounded,
+                          size: 16, color: Color(0xFFB63519)),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ],
                 ),
               ),
             ),
+
+          // ── Nearby stops top card ───────────────────────────────────
           if (clusterStops.isNotEmpty)
             Positioned(
-              top: _error != null ? 72 : 12,
+              top: MediaQuery.of(context).padding.top + 68,
               left: 12,
               right: 12,
               child: _NearbyStopsFloatingCard(
                 anchorName: stop?.stopName ?? widget.favoriteStop.stopName,
                 clusterStops: clusterStops,
+                isDark: isDark,
               ),
             ),
+
+          // ── Track cards (bottom) ────────────────────────────────────
           if (sortedTracks.isNotEmpty || remainingRoutes.isNotEmpty)
             Positioned(
               left: 12,
               right: 12,
-              bottom: 12,
+              bottom: 16,
               child: SizedBox(
-                height: 146,
+                height: 152,
                 child: PageView.builder(
                   controller: _trackPageController,
-                  itemCount:
-                      sortedTracks.length + (remainingRoutes.isNotEmpty ? 1 : 0),
+                  itemCount: sortedTracks.length + (remainingRoutes.isNotEmpty ? 1 : 0),
                   onPageChanged: (index) {
                     setState(() {
                       _focusedTrackPage = index;
@@ -783,29 +910,31 @@ class _StopDetailPageState extends State<StopDetailPage> {
                     });
                     if (index < sortedTracks.length) {
                       WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted) {
-                          _fitMap();
-                        }
+                        if (mounted) _fitMap();
                       });
                     }
                   },
                   itemBuilder: (context, index) {
                     if (index < sortedTracks.length) {
-                      final track = sortedTracks[index];
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 4),
                         child: _TrackFloatingCard(
-                          track: track,
+                          track: sortedTracks[index],
                           stopName: stop?.stopName ?? widget.favoriteStop.stopName,
                           updatedAt: _lastUpdatedAt,
-                          isSelected: track.key == selectedTrack?.key,
+                          isSelected: sortedTracks[index].key == selectedTrack?.key,
+                          totalPages: sortedTracks.length + (remainingRoutes.isNotEmpty ? 1 : 0),
+                          currentPage: index,
+                          isDark: isDark,
                         ),
                       );
                     }
-
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: _MissingRoutesPageCard(routes: remainingRoutes),
+                      child: _MissingRoutesPageCard(
+                        routes: remainingRoutes,
+                        isDark: isDark,
+                      ),
                     );
                   },
                 ),
@@ -821,67 +950,90 @@ class _NearbyStopsFloatingCard extends StatelessWidget {
   const _NearbyStopsFloatingCard({
     required this.anchorName,
     required this.clusterStops,
+    required this.isDark,
   });
 
   final String anchorName;
   final List<TransitStop> clusterStops;
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
+    final orange = AppThemeUtils.getAccentColor(context, 'orange');
+
     return Material(
-      elevation: 3,
-      borderRadius: BorderRadius.circular(14),
-      color: AppThemeUtils.getCardColor(context).withValues(alpha: 0.96),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+      elevation: 4,
+      borderRadius: BorderRadius.circular(16),
+      color: isDark
+          ? const Color(0xFF1A2535).withValues(alpha: 0.97)
+          : Colors.white.withValues(alpha: 0.97),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: orange.withValues(alpha: isDark ? 0.25 : 0.2),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        child: Row(
           children: [
-            Text(
-              '${clusterStops.length} durak birlestirildi',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
+            Container(
+              padding: const EdgeInsets.all(7),
+              decoration: BoxDecoration(
+                color: orange.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.merge_rounded, color: orange, size: 16),
             ),
-            const SizedBox(height: 4),
-            Text(
-              anchorName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: AppThemeUtils.getTextColor(context),
-                    fontWeight: FontWeight.w600,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${clusterStops.length} yakın durak birleştirildi',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                      color: AppThemeUtils.getTextColor(context),
+                    ),
                   ),
-            ),
-            const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: clusterStops
-                    .map(
-                      (stop) => Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: AppThemeUtils.getSubtleBackgroundColor(context),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: AppThemeUtils.getBorderColor(context)),
-                          ),
-                          child: Text(
-                            stop.stopName,
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                  fontWeight: FontWeight.w700,
+                  const SizedBox(height: 2),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: clusterStops
+                          .map(
+                            (stop) => Padding(
+                              padding: const EdgeInsets.only(right: 6),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
                                 ),
-                          ),
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
+                                decoration: BoxDecoration(
+                                  color: AppThemeUtils.getSubtleBackgroundColor(context),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: AppThemeUtils.getBorderColor(context),
+                                  ),
+                                ),
+                                child: Text(
+                                  stop.stopName,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppThemeUtils.getSecondaryTextColor(context),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -897,74 +1049,221 @@ class _TrackFloatingCard extends StatelessWidget {
     required this.stopName,
     required this.updatedAt,
     required this.isSelected,
+    required this.totalPages,
+    required this.currentPage,
+    required this.isDark,
   });
 
   final _RouteTrackInfo track;
   final String stopName;
   final DateTime? updatedAt;
   final bool isSelected;
+  final int totalPages;
+  final int currentPage;
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
+    final blue = AppThemeUtils.getAccentColor(context, 'blue');
+    final green = AppThemeUtils.getAccentColor(context, 'green');
     final updated = updatedAt == null
         ? '-'
         : '${updatedAt!.hour.toString().padLeft(2, '0')}:${updatedAt!.minute.toString().padLeft(2, '0')}';
-    final etaText = track.nearestEtaMinutes == null
-        ? 'ETA yok'
-        : '${track.nearestEtaMinutes} dk${track.nextEtaMinutes == null ? '' : ' • ${track.nextEtaMinutes} dk'}';
+    final hasEta = track.nearestEtaMinutes != null;
 
     return Material(
-      elevation: 3,
-      borderRadius: BorderRadius.circular(14),
-      color: AppThemeUtils.getCardColor(context).withValues(alpha: 0.96),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+      elevation: 4,
+      borderRadius: BorderRadius.circular(16),
+      color: isDark
+          ? const Color(0xFF1A2535).withValues(alpha: 0.97)
+          : Colors.white.withValues(alpha: 0.97),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected
+                ? blue.withValues(alpha: isDark ? 0.4 : 0.3)
+                : AppThemeUtils.getBorderColor(context),
+          ),
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Header row
             Row(
               children: [
                 Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(color: track.color, shape: BoxShape.circle),
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: track.color,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: track.color.withValues(alpha: 0.4),
+                        blurRadius: 4,
+                        spreadRadius: 1,
+                      ),
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: blue.withValues(alpha: isDark ? 0.2 : 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    track.routeCode,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      color: blue,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Hat ${track.routeCode} • ${track.direction == '1' ? 'Donus' : 'Gidis'}',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                    track.direction == '1' ? 'Dönüş' : 'Gidiş',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: AppThemeUtils.getTextColor(context),
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 if (isSelected)
-                  Icon(
-                    Icons.radio_button_checked,
-                    size: 16,
-                    color: AppThemeUtils.getAccentColor(context, 'blue'),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: blue.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'Seçili',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: blue,
+                      ),
+                    ),
                   ),
               ],
             ),
-            const SizedBox(height: 6),
-            Text(
-              '$stopName • ${(track.approachMeters / 1000).toStringAsFixed(1)} km',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              'Yaklasan: $etaText • Canli: ${track.liveBusCount}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: AppThemeUtils.getAccentColor(context, 'green'),
-                    fontWeight: FontWeight.w700,
+            const SizedBox(height: 8),
+            // ETA row
+            Row(
+              children: [
+                if (hasEta) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: green.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.directions_bus_rounded, size: 12, color: green),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${track.nearestEtaMinutes} dk',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: green,
+                          ),
+                        ),
+                        if (track.nextEtaMinutes != null) ...[
+                          Text(
+                            ' · ${track.nextEtaMinutes} dk',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: green.withValues(alpha: 0.7),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
+                ] else
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppThemeUtils.getSubtleBackgroundColor(context),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Yaklaşan yok',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppThemeUtils.getSecondaryTextColor(context),
+                      ),
+                    ),
+                  ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppThemeUtils.getSubtleBackgroundColor(context),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${track.liveBusCount} araç',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: AppThemeUtils.getSecondaryTextColor(context),
+                    ),
+                  ),
+                ),
+              ],
             ),
             const Spacer(),
-            Text(
-              'Son guncelleme: $updated',
-              style: Theme.of(context).textTheme.labelSmall,
+            // Footer row
+            Row(
+              children: [
+                Icon(
+                  Icons.access_time_rounded,
+                  size: 11,
+                  color: AppThemeUtils.getSecondaryTextColor(context),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  updated,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppThemeUtils.getSecondaryTextColor(context),
+                  ),
+                ),
+                const Spacer(),
+                // Page dots
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(totalPages, (i) {
+                    final active = i == currentPage;
+                    return Container(
+                      width: active ? 14 : 6,
+                      height: 6,
+                      margin: const EdgeInsets.symmetric(horizontal: 2),
+                      decoration: BoxDecoration(
+                        color: active
+                            ? blue
+                            : AppThemeUtils.getBorderColor(context),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    );
+                  }),
+                ),
+              ],
             ),
           ],
         ),
@@ -974,28 +1273,71 @@ class _TrackFloatingCard extends StatelessWidget {
 }
 
 class _MissingRoutesPageCard extends StatelessWidget {
-  const _MissingRoutesPageCard({required this.routes});
+  const _MissingRoutesPageCard({
+    required this.routes,
+    required this.isDark,
+  });
 
   final List<String> routes;
+  final bool isDark;
 
   @override
   Widget build(BuildContext context) {
+    final blue = AppThemeUtils.getAccentColor(context, 'blue');
+
     return Material(
-      elevation: 3,
-      borderRadius: BorderRadius.circular(14),
-      color: AppThemeUtils.getCardColor(context).withValues(alpha: 0.96),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+      elevation: 4,
+      borderRadius: BorderRadius.circular(16),
+      color: isDark
+          ? const Color(0xFF1A2535).withValues(alpha: 0.97)
+          : Colors.white.withValues(alpha: 0.97),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppThemeUtils.getBorderColor(context)),
+        ),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Buradan gecer (yaklasmayanlar)',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: blue.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  child: Icon(Icons.route_rounded, size: 14, color: blue),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'Bu durağa uğrayan diğer hatlar',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: AppThemeUtils.getTextColor(context),
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppThemeUtils.getSubtleBackgroundColor(context),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '${routes.length} hat',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppThemeUtils.getSecondaryTextColor(context),
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Expanded(
               child: SingleChildScrollView(
                 child: Wrap(
@@ -1005,17 +1347,21 @@ class _MissingRoutesPageCard extends StatelessWidget {
                       .take(24)
                       .map(
                         (route) => Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: AppThemeUtils.getSubtleBackgroundColor(context),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: AppThemeUtils.getBorderColor(context)),
+                            color: blue.withValues(alpha: isDark ? 0.15 : 0.08),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: blue.withValues(alpha: isDark ? 0.25 : 0.15),
+                            ),
                           ),
                           child: Text(
                             route,
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: blue,
+                            ),
                           ),
                         ),
                       )

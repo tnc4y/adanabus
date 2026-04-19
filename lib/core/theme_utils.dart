@@ -22,6 +22,13 @@ class AppThemeUtils {
         : Colors.white;
   }
 
+  /// Get default page background color
+  static Color getBackgroundColor(BuildContext context) {
+    return Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFF0C1118)
+        : const Color(0xFFF7FAFE);
+  }
+
   /// Get subtle background color (for containers)
   static Color getSubtleBackgroundColor(BuildContext context) {
     return Theme.of(context).brightness == Brightness.dark
@@ -60,7 +67,7 @@ class AppThemeUtils {
   /// Get color based on status (arrived/on-time/delayed)
   static Color getStatusColor(BuildContext context, String status) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     if (status == 'arrived') {
       return isDark ? const Color(0xFF4FAB96) : const Color(0xFF1C7A47);
     } else if (status == 'ontime') {
@@ -74,7 +81,7 @@ class AppThemeUtils {
   /// Get accent color for list items
   static Color getAccentColor(BuildContext context, String type) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     if (type == 'green') {
       return isDark ? const Color(0xFF4FAB96) : const Color(0xFF0B5A25);
     } else if (type == 'blue') {
