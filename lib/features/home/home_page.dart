@@ -329,23 +329,21 @@ class _HomePageState extends State<HomePage> {
           ..addEntries(catalog.map((stop) => MapEntry(stop.stopId, stop)));
       }
 
-      final fallback = <String, List<_HomeApproachingBus>>{};
-      for (final stop in stops) {
-        fallback[stop.stopId] = _buildFallbackApproachingForStop(stop);
-      }
-
-      if (mounted) {
-        setState(() {
-          _routeAwareApproachingByStopId = fallback;
-        });
-      }
-
       final result = <String, List<_HomeApproachingBus>>{};
       for (final stop in stops) {
         final routeAware = await _loadRouteAwareApproachingForStop(stop);
-        result[stop.stopId] = routeAware.isNotEmpty
-            ? routeAware
-            : (fallback[stop.stopId] ?? const <_HomeApproachingBus>[]);
+        if (routeAware.isNotEmpty) {
+          result[stop.stopId] = routeAware;
+        } else {
+          // Eğer yeni veri yoksa, eski veriyi tut (null olmayan değerleri)
+          final existing = _routeAwareApproachingByStopId[stop.stopId];
+          if (existing != null && existing.isNotEmpty) {
+            result[stop.stopId] = existing;
+          } else {
+            // Eğer eski veri de yoksa, fallback'i kullan
+            result[stop.stopId] = _buildFallbackApproachingForStop(stop);
+          }
+        }
       }
 
       if (!mounted) {
@@ -556,27 +554,6 @@ class _HomePageState extends State<HomePage> {
                 child: ListView(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
                   children: [
-                    if (_nearestStop != null)
-                      _NearestStopCard(
-                        stop: _nearestStop!,
-                        summary: _nearestSummary,
-                        onAdd: _addNearestStopToFavorites,
-                        onOpenStop: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => StopDetailPage(
-                                favoriteStop: FavoriteStopItem(
-                                  stopId: _nearestStop!.stopId,
-                                  stopName: _nearestStop!.stopName,
-                                  latitude: _nearestStop!.latitude,
-                                  longitude: _nearestStop!.longitude,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    if (_nearestStop != null) const SizedBox(height: 14),
                     Row(
                       children: [
                         Text(
@@ -595,7 +572,7 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 14),
                     if (entries.isEmpty)
                       _EmptyFavoritesHero(
                         onOpenLines: widget.onOpenLines,
@@ -625,7 +602,7 @@ class _HomePageState extends State<HomePage> {
                       )
                     else
                       SizedBox(
-                        height: 228,
+                        height: 260,
                         child: PageView.builder(
                           controller: _carouselController,
                           itemCount: entries.length + 1,
@@ -677,6 +654,27 @@ class _HomePageState extends State<HomePage> {
                       onOpenFavorites: widget.onOpenFavorites,
                       onRefreshGps: _requestPosition,
                     ),
+                    const SizedBox(height: 20),
+                    if (_nearestStop != null)
+                      _NearestStopCard(
+                        stop: _nearestStop!,
+                        summary: _nearestSummary,
+                        onAdd: _addNearestStopToFavorites,
+                        onOpenStop: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => StopDetailPage(
+                                favoriteStop: FavoriteStopItem(
+                                  stopId: _nearestStop!.stopId,
+                                  stopName: _nearestStop!.stopName,
+                                  latitude: _nearestStop!.latitude,
+                                  longitude: _nearestStop!.longitude,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     const SizedBox(height: 14),
                     if (_error != null)
                       _InlineErrorCard(message: _error!),
@@ -845,24 +843,6 @@ class _NearestStopCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text('Durak ID: ${stop.stopId}'),
-              const SizedBox(height: 10),
-              if (summary == null || !summary!.hasEstimate)
-                const Text('Yakın araç verisi bekleniyor.')
-              else
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _HeaderChip(
-                      label: 'En yakın: ${summary!.nearestEtaMinutes} dk',
-                    ),
-                    if (summary!.nextEtaMinutes != null)
-                      _HeaderChip(
-                        label: 'Sonraki: ${summary!.nextEtaMinutes} dk',
-                      ),
-                    _HeaderChip(label: 'Canlı araç: ${summary!.liveBusCount}'),
-                  ],
-                ),
             ],
           ),
         ),
@@ -886,97 +866,192 @@ class _FavoriteHomeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = switch (entry.kind) {
-      FavoriteHomeEntryKind.line => const Color(0xFF0A4FB5),
-      FavoriteHomeEntryKind.stop => const Color(0xFF1C7A47),
-      FavoriteHomeEntryKind.route => const Color(0xFFE17900),
+    final (accent, icon) = switch (entry.kind) {
+      FavoriteHomeEntryKind.line => (const Color(0xFF0A4FB5), Icons.route),
+      FavoriteHomeEntryKind.stop => (const Color(0xFF1C7A47), Icons.location_on_rounded),
+      FavoriteHomeEntryKind.route => (const Color(0xFFE17900), Icons.map_rounded),
     };
 
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      elevation: 1.2,
+      borderRadius: BorderRadius.circular(24),
+      elevation: 0,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: accent.withValues(alpha: 0.15), width: 1.5),
             gradient: LinearGradient(
-              colors: [accent.withValues(alpha: 0.18), Colors.white],
+              colors: [
+                accent.withValues(alpha: 0.06),
+                Colors.white,
+              ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
+              // Header
               Row(
                 children: [
                   Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(color: accent, shape: BoxShape.circle),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon, color: accent, size: 22),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      entry.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          entry.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.3,
+                              ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          entry.subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: const Color(0xFF5E6B82),
+                                fontWeight: FontWeight.w500,
+                              ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              Text(
-                entry.subtitle,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-              const Spacer(),
+              
+              // Content for stop items
               if (entry.kind == FavoriteHomeEntryKind.stop && liveSummary != null)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _HeaderChip(label: 'Canlı araç: ${liveSummary!.liveBusCount}'),
-                    const SizedBox(height: 6),
-                    if (approachingBuses.isEmpty)
-                      Text(
-                        'Yaklaşan araç bilgisi bekleniyor',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      )
-                    else
-                      ...approachingBuses.map(
-                        (bus) => Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
+                    const SizedBox(height: 14),
+                    if (approachingBuses.isNotEmpty) ...[
+                      ...approachingBuses.take(3).map((bus) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: _BusApproachingRow(bus: bus),
+                      )),
+                      if (approachingBuses.length > 3)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
                           child: Text(
-                            'Hat ${bus.routeCode} • ${bus.direction} • ${bus.etaMinutes} dk • Araç ${bus.vehicle}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            '+${approachingBuses.length - 3} daha',
                             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF8A95A8),
+                                  fontWeight: FontWeight.w600,
                                 ),
                           ),
+                        ),
+                    ] else
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          'Yakın araç verisi bekleniyor',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: const Color(0xFF8A95A8),
+                              ),
                         ),
                       ),
                   ],
                 )
               else
-                Text(
-                  entry.kind == FavoriteHomeEntryKind.line
-                      ? 'Hat detayına git'
-                      : entry.kind == FavoriteHomeEntryKind.route
-                          ? 'Kayıtlı rotayı aç'
-                          : 'Durak detayını aç',
-                  style: Theme.of(context).textTheme.bodySmall,
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.arrow_forward_rounded, 
+                        size: 16, 
+                        color: accent.withValues(alpha: 0.6),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        entry.kind == FavoriteHomeEntryKind.line
+                            ? 'Detayı aç'
+                            : entry.kind == FavoriteHomeEntryKind.route
+                                ? 'Rotayı aç'
+                                : 'Detayı aç',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: accent.withValues(alpha: 0.8),
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ],
+                  ),
                 ),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _BusApproachingRow extends StatelessWidget {
+  const _BusApproachingRow({required this.bus});
+
+  final _HomeApproachingBus bus;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F7FA),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE2E7F0), width: 0.8),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0A4FB5),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              bus.routeCode,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1C7A47).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              '${bus.etaMinutes} dk',
+              style: const TextStyle(
+                color: Color(0xFF1C7A47),
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1129,28 +1204,55 @@ class _ActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFFBFDFF),
-      borderRadius: BorderRadius.circular(16),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      elevation: 0,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
         child: Container(
-          padding: const EdgeInsets.all(12),
-          constraints: const BoxConstraints(minHeight: 86),
+          padding: const EdgeInsets.all(14),
+          constraints: const BoxConstraints(minHeight: 92),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE2E7F0)),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: const Color(0xFFE2E7F0),
+              width: 1.2,
+            ),
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFFFFFFFF),
+                const Color(0xFFFAFBFC),
+              ],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: const Color(0xFF164B9D)),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A4FB5).withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  icon,
+                  color: const Color(0xFF0A4FB5),
+                  size: 20,
+                ),
+              ),
               const SizedBox(height: 8),
               Text(
                 label,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  color: Color(0xFF3D4857),
+                ),
               ),
             ],
           ),
@@ -1169,55 +1271,58 @@ class _CarouselManageCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      elevation: 1,
+      borderRadius: BorderRadius.circular(24),
+      elevation: 0,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(24),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFD7DFEE)),
-            gradient: const LinearGradient(
-              colors: [Color(0xFFF7FAFF), Color(0xFFEAF1FF)],
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: const Color(0xFF0A4FB5).withValues(alpha: 0.15),
+              width: 1.5,
+            ),
+            gradient: LinearGradient(
+              colors: [
+                const Color(0xFF0A4FB5).withValues(alpha: 0.06),
+                Colors.white,
+              ],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Icon(Icons.tune, size: 28, color: Color(0xFF164B9D)),
-              SizedBox(height: 10),
-              Text(
-                'Düzenle',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A4FB5).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.edit_rounded,
+                  size: 28,
+                  color: Color(0xFF0A4FB5),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Favorileri\nDüzenle',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  height: 1.3,
+                  color: Color(0xFF0A4FB5),
+                ),
               ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _HeaderChip extends StatelessWidget {
-  const _HeaderChip({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.92),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(fontWeight: FontWeight.w600),
       ),
     );
   }

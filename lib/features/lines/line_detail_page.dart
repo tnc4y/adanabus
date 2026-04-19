@@ -7,6 +7,8 @@ import 'package:latlong2/latlong.dart';
 
 import '../../data/services/adana_api_service.dart';
 import '../../data/models/bus_vehicle.dart';
+import 'line_detail_models.dart';
+import 'line_detail_overlays.dart';
 import 'line_timetable_page.dart';
 
 class LineDetailPage extends StatefulWidget {
@@ -39,6 +41,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
   Map<String, StopArrivalEstimate> _arrivalByStopKey =
       <String, StopArrivalEstimate>{};
   LineStop? _selectedStop;
+  String? _departureTimeText;
   int _focusedBusIndex = 0;
   Timer? _liveBusTimer;
   Timer? _mapFocusTimer;
@@ -107,6 +110,11 @@ class _LineDetailPageState extends State<LineDetailPage> {
           ? liveBusesFromPath
           : liveRouteBuses;
       final arrivals = _buildStopArrivalEstimates(stops, resolvedLiveBuses);
+      final departureTimeText = await _resolveNearestDepartureTimeForToday(
+        stops: stops,
+        allBuses: routeBuses,
+        liveBuses: resolvedLiveBuses,
+      );
       final nextFocusedBusIndex = _syncFocusedBusIndex(
         previousBuses: _liveRouteBuses,
         nextBuses: resolvedLiveBuses,
@@ -119,6 +127,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
         _liveRouteBuses = resolvedLiveBuses;
         _arrivalByStopKey = arrivals;
         _selectedStop = _resolveSelectedStop(stops, _selectedStop);
+        _departureTimeText = departureTimeText;
         _focusedBusIndex = nextFocusedBusIndex;
         _lastBusRefreshAt = DateTime.now();
       });
@@ -599,6 +608,47 @@ class _LineDetailPageState extends State<LineDetailPage> {
                     )
                     .toList(growable: false),
               ),
+              if (_departureTimeText != null && _stops.isNotEmpty)
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: LatLng(_stops.first.latitude, _stops.first.longitude),
+                      width: 164,
+                      height: 64,
+                      child: IgnorePointer(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0B5A25),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                'Cikis: $_departureTimeText',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            const Icon(
+                              Icons.play_circle_fill,
+                              color: Color(0xFF0B5A25),
+                              size: 24,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
           if (_selectedStop != null)
@@ -606,7 +656,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
               left: 12,
               right: 12,
               bottom: 18,
-              child: _SelectedStopInfoCard(
+              child: LineDetailSelectedStopInfoCard(
                 stop: _selectedStop!,
                 estimate: _arrivalByStopKey[_selectedStop!.key],
                 currentRouteCode: widget.routeCode,
@@ -627,7 +677,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
               child: SizedBox(
                 height: 128,
                 child: _liveRouteBuses.isEmpty
-                    ? const _VehicleEmptyFloatingCard()
+                  ? const LineDetailVehicleEmptyFloatingCard()
                     : PageView.builder(
                         controller: _vehiclePageController,
                         itemCount: _liveRouteBuses.length,
@@ -641,7 +691,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
                           final bus = _liveRouteBuses[index];
                           return Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: _VehicleFloatingCard(
+                            child: LineDetailVehicleFloatingCard(
                               bus: bus,
                               routeCode: widget.routeCode,
                               direction: _currentDirection,
@@ -826,7 +876,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
     final result = <String, StopArrivalEstimate>{};
 
     for (final stop in stops) {
-      final candidates = <_BusEtaCandidate>[];
+      final candidates = <BusEtaCandidate>[];
       for (final bus in buses) {
         if (!bus.hasLocation) {
           continue;
@@ -840,7 +890,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
         );
         final etaMinutes = (distance / _etaMetersPerMinute).clamp(1, 180).round();
         candidates.add(
-          _BusEtaCandidate(
+          BusEtaCandidate(
             busId: bus.id,
             etaMinutes: etaMinutes,
           ),
@@ -885,6 +935,287 @@ class _LineDetailPageState extends State<LineDetailPage> {
   }
 
   double _toRadians(double value) => value * (math.pi / 180.0);
+
+  Future<String?> _resolveNearestDepartureTimeForToday({
+    required List<LineStop> stops,
+    required List<BusVehicle> allBuses,
+    required List<BusVehicle> liveBuses,
+  }) async {
+    if (stops.isEmpty) {
+      return null;
+    }
+
+    final candidateBusIds = <String>[];
+    final seen = <String>{};
+
+    void addBusId(String id) {
+      final normalized = id.trim();
+      if (normalized.isEmpty || !seen.add(normalized)) {
+        return;
+      }
+      candidateBusIds.add(normalized);
+    }
+
+    for (final bus in allBuses.where((bus) =>
+        bus.displayRouteCode == widget.routeCode &&
+        bus.direction == _currentDirection)) {
+      addBusId(bus.id);
+    }
+    for (final bus in liveBuses.where((bus) =>
+        bus.displayRouteCode == widget.routeCode &&
+        bus.direction == _currentDirection)) {
+      addBusId(bus.id);
+    }
+
+    if (candidateBusIds.isEmpty) {
+      return null;
+    }
+
+    final now = TimeOfDay.now();
+    final nowMinutes = (now.hour * 60) + now.minute;
+    final todayDayType = _todayDayType(DateTime.now());
+
+    int? bestMinutes;
+    String? bestLabel;
+
+    for (final busId in candidateBusIds.take(8)) {
+      try {
+        final dynamic raw = await _apiService.fetchStopBusTimeByBusId(busId);
+        final payload = raw is Map<String, dynamic>
+            ? raw
+            : <String, dynamic>{'data': raw};
+        final times = _extractTimesForDayType(
+          payload,
+          todayDayType,
+          targetDirection: _currentDirection,
+        );
+
+        for (final time in times) {
+          final minutes = _timeStringToMinutes(time);
+          if (minutes == null || minutes < nowMinutes) {
+            continue;
+          }
+
+          if (bestMinutes == null || minutes < bestMinutes) {
+            bestMinutes = minutes;
+            bestLabel = time;
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (bestMinutes == null || bestLabel == null) {
+      return null;
+    }
+
+    final diff = bestMinutes - nowMinutes;
+    if (diff > 600) {
+      return null;
+    }
+
+    return bestLabel;
+  }
+
+  int _todayDayType(DateTime now) {
+    if (now.weekday == DateTime.saturday) {
+      return 6;
+    }
+    if (now.weekday == DateTime.sunday) {
+      return 7;
+    }
+    return 0;
+  }
+
+  List<String> _extractTimesForDayType(
+    Map<String, dynamic> payload,
+    int dayType, {
+    required String targetDirection,
+  }) {
+    final found = <String>{};
+    final timePattern = RegExp(r'\b(?:[01]?\d|2[0-3]):[0-5]\d\b');
+    final dateLikePattern = RegExp(r'\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b');
+
+    bool isScheduleKey(String? key) {
+      final k = (key ?? '').toLowerCase().replaceAll('_', '');
+      return k.contains('saat') ||
+          k.contains('time') ||
+          k.contains('hour') ||
+          k.contains('kalkis') ||
+          k.contains('departure') ||
+          k.contains('sefer');
+    }
+
+    bool isNoiseKey(String? key) {
+      final k = (key ?? '').toLowerCase().replaceAll('_', '');
+      return k.contains('update') ||
+          k.contains('timestamp') ||
+          k.contains('created') ||
+          k.contains('modified') ||
+          k.contains('date') ||
+          k.contains('guncel') ||
+          k.contains('refresh') ||
+          k.contains('last');
+    }
+
+    bool looksLikeScheduleValue(String text, String? keyHint) {
+      if (text.trim().isEmpty) {
+        return false;
+      }
+      if (dateLikePattern.hasMatch(text)) {
+        return false;
+      }
+      if (isNoiseKey(keyHint)) {
+        return false;
+      }
+
+      final hasTime = timePattern.hasMatch(text);
+      if (!hasTime) {
+        return false;
+      }
+
+      // Prefer explicit schedule fields; fallback for short plain time rows.
+      if (isScheduleKey(keyHint)) {
+        return true;
+      }
+
+      return text.length <= 64;
+    }
+
+    int? parseDayTypeFromMap(Map map, int? inherited) {
+      int? resolved = inherited;
+      for (final entry in map.entries) {
+        final key = entry.key.toString().toLowerCase().replaceAll('_', '');
+        if (key == 'daytype' || key == 'day') {
+          final parsed = int.tryParse(entry.value.toString().trim());
+          if (parsed != null) {
+            resolved = parsed;
+            break;
+          }
+        }
+      }
+      return resolved;
+    }
+
+    String? normalizeDirectionValue(dynamic raw) {
+      if (raw == null) {
+        return null;
+      }
+
+      final text = raw.toString().trim().toLowerCase();
+      if (text.isEmpty) {
+        return null;
+      }
+
+      if (text == '0' ||
+          text == 'gidis' ||
+          text == 'gidi' ||
+          text == 'gidiş' ||
+          text == 'outbound') {
+        return '0';
+      }
+
+      if (text == '1' ||
+          text == 'donus' ||
+          text == 'dönüş' ||
+          text == 'donuş' ||
+          text == 'inbound') {
+        return '1';
+      }
+
+      return null;
+    }
+
+    String? parseDirectionFromMap(Map map, String? inherited) {
+      var resolved = inherited;
+      for (final entry in map.entries) {
+        final key = entry.key.toString().toLowerCase().replaceAll('_', '');
+        if (key == 'direction' ||
+            key == 'dir' ||
+            key == 'routeDirection'.toLowerCase() ||
+            key == 'yon' ||
+            key == 'yön') {
+          final parsed = normalizeDirectionValue(entry.value);
+          if (parsed != null) {
+            resolved = parsed;
+            break;
+          }
+        }
+      }
+      return resolved;
+    }
+
+    void walk(
+      dynamic node,
+      int? inheritedDayType,
+      String? inheritedDirection,
+      String? keyHint,
+    ) {
+      if (node is Map) {
+        final resolvedDayType = parseDayTypeFromMap(node, inheritedDayType);
+        final resolvedDirection = parseDirectionFromMap(node, inheritedDirection);
+        for (final entry in node.entries) {
+          walk(
+            entry.value,
+            resolvedDayType,
+            resolvedDirection,
+            entry.key.toString(),
+          );
+        }
+        return;
+      }
+
+      if (node is List) {
+        for (final item in node) {
+          walk(item, inheritedDayType, inheritedDirection, keyHint);
+        }
+        return;
+      }
+
+      if (inheritedDayType != dayType || node == null) {
+        return;
+      }
+
+      if (inheritedDirection != null && inheritedDirection != targetDirection) {
+        return;
+      }
+
+      final text = node.toString();
+      if (!looksLikeScheduleValue(text, keyHint)) {
+        return;
+      }
+      for (final match in timePattern.allMatches(text)) {
+        final value = match.group(0);
+        if (value != null) {
+          found.add(value);
+        }
+      }
+    }
+
+    walk(payload, null, null, null);
+
+    final sorted = found.toList(growable: false);
+    sorted.sort((a, b) {
+      final am = _timeStringToMinutes(a) ?? 0;
+      final bm = _timeStringToMinutes(b) ?? 0;
+      return am.compareTo(bm);
+    });
+    return sorted;
+  }
+
+  int? _timeStringToMinutes(String value) {
+    final parts = value.split(':');
+    if (parts.length != 2) {
+      return null;
+    }
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) {
+      return null;
+    }
+    return (hour * 60) + minute;
+  }
 
   LatLng _resolveRouteCenter() {
     if (_stops.isNotEmpty) {
@@ -953,212 +1284,4 @@ class _LineDetailPageState extends State<LineDetailPage> {
     _lastMapZoom = 13.2;
   }
 
-}
-
-class _VehicleFloatingCard extends StatelessWidget {
-  const _VehicleFloatingCard({
-    required this.bus,
-    required this.routeCode,
-    required this.direction,
-  });
-
-  final BusVehicle bus;
-  final String routeCode;
-  final String direction;
-
-  @override
-  Widget build(BuildContext context) {
-    final lat = bus.latitude?.toStringAsFixed(5) ?? '-';
-    final lon = bus.longitude?.toStringAsFixed(5) ?? '-';
-
-    return Material(
-      elevation: 4,
-      color: Colors.white.withValues(alpha: 0.97),
-      borderRadius: BorderRadius.circular(14),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.directions_bus, color: Color(0xFF0B5A25)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    bus.id.isEmpty ? 'Arac' : 'Arac ${bus.id}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                ),
-                Text(
-                  direction == '1' ? 'Donus' : 'Gidis',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text('Hat: $routeCode'),
-            if (bus.name.isNotEmpty)
-              Text(
-                bus.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            Text('Konum: $lat, $lon'),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _VehicleEmptyFloatingCard extends StatelessWidget {
-  const _VehicleEmptyFloatingCard();
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      elevation: 2,
-      color: Colors.white.withValues(alpha: 0.96),
-      borderRadius: BorderRadius.circular(14),
-      child: const Center(
-        child: Text(
-          'Canli arac bilgisi bekleniyor...',
-          style: TextStyle(fontWeight: FontWeight.w700),
-        ),
-      ),
-    );
-  }
-}
-
-class _SelectedStopInfoCard extends StatelessWidget {
-  const _SelectedStopInfoCard({
-    required this.stop,
-    required this.estimate,
-    required this.currentRouteCode,
-    required this.currentDirection,
-    required this.lastRefreshAt,
-    required this.onClose,
-  });
-
-  final LineStop stop;
-  final StopArrivalEstimate? estimate;
-  final String currentRouteCode;
-  final String currentDirection;
-  final DateTime? lastRefreshAt;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    final refreshLabel = lastRefreshAt == null
-        ? 'Guncellenmedi'
-        : '${lastRefreshAt!.hour.toString().padLeft(2, '0')}:${lastRefreshAt!.minute.toString().padLeft(2, '0')}:${lastRefreshAt!.second.toString().padLeft(2, '0')}';
-    final routeList = stop.routes.isEmpty
-        ? currentRouteCode
-        : stop.routes.take(8).join(', ');
-
-    return Material(
-      elevation: 3,
-      borderRadius: BorderRadius.circular(12),
-      color: Colors.white.withValues(alpha: 0.96),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    stop.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 13,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  onPressed: onClose,
-                  icon: const Icon(Icons.close, size: 18),
-                  tooltip: 'Detayi kapat',
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Ne geliyor: Hatlar $routeList',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12),
-            ),
-            Text(
-              'Ne gidiyor: Hat $currentRouteCode • ${currentDirection == '1' ? 'Donus' : 'Gidis'}',
-              style: const TextStyle(fontSize: 12),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              estimate == null
-                  ? 'Tahmin yok • Son: $refreshLabel'
-                  : 'En yakin: ${estimate!.nearestEtaMinutes} dk, Sonraki: ${estimate!.nextEtaMinutes ?? '-'} dk',
-              style: TextStyle(
-                fontSize: 12,
-                color: estimate == null
-                    ? const Color(0xFF6A6A6A)
-                    : const Color(0xFF175E2F),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class LineStop {
-  const LineStop({
-    required this.stopId,
-    required this.name,
-    required this.latitude,
-    required this.longitude,
-    required this.routes,
-  });
-
-  final String stopId;
-  final String name;
-  final double latitude;
-  final double longitude;
-  final List<String> routes;
-
-  String get key =>
-      stopId.isNotEmpty ? stopId : '${latitude.toStringAsFixed(6)}|${longitude.toStringAsFixed(6)}';
-}
-
-class StopArrivalEstimate {
-  const StopArrivalEstimate({
-    required this.nearestEtaMinutes,
-    required this.nearestBusId,
-    required this.nextEtaMinutes,
-    required this.nextBusId,
-  });
-
-  final int nearestEtaMinutes;
-  final String nearestBusId;
-  final int? nextEtaMinutes;
-  final String? nextBusId;
-}
-
-class _BusEtaCandidate {
-  const _BusEtaCandidate({
-    required this.busId,
-    required this.etaMinutes,
-  });
-
-  final String busId;
-  final int etaMinutes;
 }

@@ -26,6 +26,8 @@ class StopDetailPage extends StatefulWidget {
 class _StopDetailPageState extends State<StopDetailPage> {
   final AdanaApiService _apiService = AdanaApiService();
   final MapController _mapController = MapController();
+  final PageController _trackPageController =
+      PageController(viewportFraction: 0.9);
 
   bool _isLoading = false;
   String? _error;
@@ -33,6 +35,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
   TransitStop? _selectedStop;
   List<_RouteTrackInfo> _tracks = <_RouteTrackInfo>[];
   String? _selectedTrackKey;
+  int _focusedTrackPage = 0;
   Timer? _refreshTimer;
   Timer? _warmupRetryTimer;
   int _warmupRetryCount = 0;
@@ -70,6 +73,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _warmupRetryTimer?.cancel();
+    _trackPageController.dispose();
     super.dispose();
   }
 
@@ -168,14 +172,27 @@ class _StopDetailPageState extends State<StopDetailPage> {
         return;
       }
 
+      tracks.sort((a, b) {
+        final distanceCompare = a.approachMeters.compareTo(b.approachMeters);
+        if (distanceCompare != 0) {
+          return distanceCompare;
+        }
+        return a.routeCode.compareTo(b.routeCode);
+      });
+
       setState(() {
         _selectedStop = selected;
         _tracks = tracks;
         if (tracks.isEmpty) {
           _selectedTrackKey = null;
+          _focusedTrackPage = 0;
         } else {
           final keepCurrent = tracks.any((item) => item.key == _selectedTrackKey);
           _selectedTrackKey = keepCurrent ? _selectedTrackKey : tracks.first.key;
+          _focusedTrackPage = tracks.indexWhere((item) => item.key == _selectedTrackKey);
+          if (_focusedTrackPage < 0) {
+            _focusedTrackPage = 0;
+          }
         }
         _lastUpdatedAt = DateTime.now();
       });
@@ -190,6 +207,9 @@ class _StopDetailPageState extends State<StopDetailPage> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           return;
+        }
+        if (_trackPageController.hasClients) {
+          _trackPageController.jumpToPage(_focusedTrackPage);
         }
         _fitMap();
       });
@@ -483,15 +503,27 @@ class _StopDetailPageState extends State<StopDetailPage> {
   @override
   Widget build(BuildContext context) {
     final stop = _selectedStop;
-    final selectedTrack = _tracks.isEmpty
-      ? null
-      : _tracks.firstWhere(
-        (item) => item.key == _selectedTrackKey,
-        orElse: () => _tracks.first,
-        );
+    final sortedTracks = List<_RouteTrackInfo>.from(_tracks)
+      ..sort((a, b) {
+        final distanceCompare = a.approachMeters.compareTo(b.approachMeters);
+        if (distanceCompare != 0) {
+          return distanceCompare;
+        }
+        return a.routeCode.compareTo(b.routeCode);
+      });
+    final selectedTrack = sortedTracks.isEmpty
+        ? null
+        : sortedTracks.firstWhere(
+            (item) => item.key == _selectedTrackKey,
+            orElse: () => sortedTracks.first,
+          );
     final visibleTracks = selectedTrack == null
-      ? const <_RouteTrackInfo>[]
-      : <_RouteTrackInfo>[selectedTrack];
+        ? const <_RouteTrackInfo>[]
+        : <_RouteTrackInfo>[selectedTrack];
+    final visibleRouteCodes = visibleTracks.map((track) => track.routeCode).toSet();
+    final remainingRoutes = (stop?.routes ?? const <String>[])
+        .where((route) => route.trim().isNotEmpty && !visibleRouteCodes.contains(route))
+        .toList(growable: false);
     final center = stop == null
         ? LatLng(widget.favoriteStop.latitude, widget.favoriteStop.longitude)
         : LatLng(stop.latitude, stop.longitude);
@@ -507,250 +539,313 @@ class _StopDetailPageState extends State<StopDetailPage> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          Expanded(
-            child: Stack(
+          Positioned.fill(
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: center,
+                initialZoom: 14,
+              ),
               children: [
-                FlutterMap(
-                  mapController: _mapController,
-                  options: MapOptions(
-                    initialCenter: center,
-                    initialZoom: 14,
-                  ),
-                  children: [
-                    TileLayer(
-                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.example.adanabus',
-                    ),
-                    PolylineLayer(
-                      polylines: visibleTracks
-                          .expand((t) {
-                            final polylines = <Polyline>[];
-                            if (t.approachPoints.length > 1) {
-                              polylines.add(
-                                Polyline(
-                                  points: t.approachPoints,
-                                  color: const Color(0xFFD32F2F),
-                                  strokeWidth: 5,
-                                ),
-                              );
-                            }
-                            if (t.afterStopPoints.length > 1) {
-                              polylines.add(
-                                Polyline(
-                                  points: t.afterStopPoints,
-                                  color: t.color.withValues(alpha: 0.9),
-                                  strokeWidth: 4,
-                                ),
-                              );
-                            }
-                            return polylines;
-                          })
-                          .toList(growable: false),
-                    ),
-                    if (stop != null)
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: LatLng(stop.latitude, stop.longitude),
-                            width: 44,
-                            height: 44,
-                            child: const Icon(
-                              Icons.place,
-                              color: Color(0xFFB63519),
-                              size: 34,
-                            ),
-                          ),
-                        ],
-                      ),
-                    MarkerLayer(
-                      markers: visibleTracks
-                          .expand((track) => track.buses)
-                          .where((bus) => bus.hasLocation)
-                          .map(
-                            (bus) => Marker(
-                              point: LatLng(bus.latitude!, bus.longitude!),
-                              width: 44,
-                              height: 44,
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFF164B9D),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Text(
-                                      bus.id.isEmpty ? 'Bus' : bus.id,
-                                      style: const TextStyle(
-                                        fontSize: 9,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                  const Icon(
-                                    Icons.directions_bus,
-                                    size: 22,
-                                    color: Color(0xFF0B5A25),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                  ],
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.adanabus',
                 ),
-                if (_isLoading)
-                  Positioned.fill(
-                    child: Container(
-                      color: Colors.white.withValues(alpha: 0.55),
-                      alignment: Alignment.center,
-                      child: const CircularProgressIndicator(),
-                    ),
-                  ),
-                if (_error != null)
-                  Positioned(
-                    top: 12,
-                    left: 12,
-                    right: 12,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF1EE),
-                        borderRadius: BorderRadius.circular(10),
+                PolylineLayer(
+                  polylines: visibleTracks
+                      .expand((t) {
+                        final polylines = <Polyline>[];
+                        if (t.approachPoints.length > 1) {
+                          polylines.add(
+                            Polyline(
+                              points: t.approachPoints,
+                              color: const Color(0xFFD32F2F),
+                              strokeWidth: 5,
+                            ),
+                          );
+                        }
+                        if (t.afterStopPoints.length > 1) {
+                          polylines.add(
+                            Polyline(
+                              points: t.afterStopPoints,
+                              color: t.color.withValues(alpha: 0.9),
+                              strokeWidth: 4,
+                            ),
+                          );
+                        }
+                        return polylines;
+                      })
+                      .toList(growable: false),
+                ),
+                if (stop != null)
+                  MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: LatLng(stop.latitude, stop.longitude),
+                        width: 44,
+                        height: 44,
+                        child: const Icon(
+                          Icons.place,
+                          color: Color(0xFFB63519),
+                          size: 34,
+                        ),
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(10),
-                        child: Text(_error!),
-                      ),
-                    ),
+                    ],
                   ),
+                MarkerLayer(
+                  markers: visibleTracks
+                      .expand((track) => track.buses)
+                      .where((bus) => bus.hasLocation)
+                      .map(
+                        (bus) => Marker(
+                          point: LatLng(bus.latitude!, bus.longitude!),
+                          width: 44,
+                          height: 44,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF164B9D),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  bus.id.isEmpty ? 'Bus' : bus.id,
+                                  style: const TextStyle(
+                                    fontSize: 9,
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              const Icon(
+                                Icons.directions_bus,
+                                size: 22,
+                                color: Color(0xFF0B5A25),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
               ],
             ),
           ),
-          SizedBox(
-            height: 300,
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              itemCount: _tracks.length + 1,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  final updated = _lastUpdatedAt == null
-                      ? 'Guncellenmedi'
-                      : '${_lastUpdatedAt!.hour.toString().padLeft(2, '0')}:${_lastUpdatedAt!.minute.toString().padLeft(2, '0')}:${_lastUpdatedAt!.second.toString().padLeft(2, '0')}';
-                  return Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF3F7FF),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      'Durak: ${widget.favoriteStop.stopName} • Son guncelleme: $updated • Canli hat: ${_tracks.length}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  );
-                }
-
-                final track = _tracks[index - 1];
-                final etaText = track.nearestEtaMinutes == null
-                    ? 'Tahmini gelis: Veri yok'
-                    : 'Tahmini gelis: ${track.nearestEtaMinutes} dk${track.nextEtaMinutes == null ? '' : ' • Sonraki ${track.nextEtaMinutes} dk'}';
-                final isSelected = track.key == (selectedTrack?.key ?? _selectedTrackKey);
-
-                return InkWell(
+          if (_isLoading)
+            Positioned.fill(
+              child: Container(
+                color: Colors.white.withValues(alpha: 0.35),
+                alignment: Alignment.center,
+                child: const CircularProgressIndicator(),
+              ),
+            ),
+          if (_error != null)
+            Positioned(
+              top: 12,
+              left: 12,
+              right: 12,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF1EE),
                   borderRadius: BorderRadius.circular(10),
-                  onTap: () {
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Text(_error!),
+                ),
+              ),
+            ),
+          if (sortedTracks.isNotEmpty || remainingRoutes.isNotEmpty)
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: SizedBox(
+                height: 146,
+                child: PageView.builder(
+                  controller: _trackPageController,
+                  itemCount:
+                      sortedTracks.length + (remainingRoutes.isNotEmpty ? 1 : 0),
+                  onPageChanged: (index) {
                     setState(() {
-                      _selectedTrackKey = track.key;
-                    });
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) {
-                        _fitMap();
+                      _focusedTrackPage = index;
+                      if (index < sortedTracks.length) {
+                        _selectedTrackKey = sortedTracks[index].key;
                       }
                     });
+                    if (index < sortedTracks.length) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) {
+                          _fitMap();
+                        }
+                      });
+                    }
                   },
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? const Color(0xFFEAF2FF)
-                          : Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: isSelected
-                            ? const Color(0xFF164B9D)
-                            : const Color(0xFFE2E7F0),
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 10,
-                              height: 10,
-                              decoration: BoxDecoration(
-                                color: track.color,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                'Hat ${track.routeCode} • ${track.direction == '1' ? 'Donus' : 'Gidis'}',
-                                style: const TextStyle(fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                            Text(
-                              'Durağa ${(track.approachMeters / 1000).toStringAsFixed(1)} km',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Color(0xFF555555),
-                              ),
-                            ),
-                          ],
+                  itemBuilder: (context, index) {
+                    if (index < sortedTracks.length) {
+                      final track = sortedTracks[index];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: _TrackFloatingCard(
+                          track: track,
+                          stopName: widget.favoriteStop.stopName,
+                          updatedAt: _lastUpdatedAt,
+                          isSelected: track.key == selectedTrack?.key,
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Nereden geliyor: ${track.fromStopName.isEmpty ? '-' : track.fromStopName}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          'Nereye gidiyor: ${track.toStopName.isEmpty ? '-' : track.toStopName}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          etaText,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: track.nearestEtaMinutes == null
-                                ? const Color(0xFF8A6D3B)
-                                : const Color(0xFF175E2F),
+                      );
+                    }
+
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: _MissingRoutesPageCard(routes: remainingRoutes),
+                    );
+                  },
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrackFloatingCard extends StatelessWidget {
+  const _TrackFloatingCard({
+    required this.track,
+    required this.stopName,
+    required this.updatedAt,
+    required this.isSelected,
+  });
+
+  final _RouteTrackInfo track;
+  final String stopName;
+  final DateTime? updatedAt;
+  final bool isSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final updated = updatedAt == null
+        ? '-'
+        : '${updatedAt!.hour.toString().padLeft(2, '0')}:${updatedAt!.minute.toString().padLeft(2, '0')}';
+    final etaText = track.nearestEtaMinutes == null
+        ? 'ETA yok'
+        : '${track.nearestEtaMinutes} dk${track.nextEtaMinutes == null ? '' : ' • ${track.nextEtaMinutes} dk'}';
+
+    return Material(
+      elevation: 3,
+      borderRadius: BorderRadius.circular(14),
+      color: Colors.white.withValues(alpha: 0.96),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(color: track.color, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Hat ${track.routeCode} • ${track.direction == '1' ? 'Donus' : 'Gidis'}',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (isSelected)
+                  const Icon(Icons.radio_button_checked, size: 16, color: Color(0xFF164B9D)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '$stopName • ${(track.approachMeters / 1000).toStringAsFixed(1)} km',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            Text(
+              'Yaklasan: $etaText • Canli: ${track.liveBusCount}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF175E2F),
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const Spacer(),
+            Text(
+              'Son guncelleme: $updated',
+              style: Theme.of(context).textTheme.labelSmall,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MissingRoutesPageCard extends StatelessWidget {
+  const _MissingRoutesPageCard({required this.routes});
+
+  final List<String> routes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 3,
+      borderRadius: BorderRadius.circular(14),
+      color: Colors.white.withValues(alpha: 0.96),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Buradan gecer (yaklasmayanlar)',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: routes
+                      .take(24)
+                      .map(
+                        (route) => Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF5F7FA),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: const Color(0xFFE2E7F0)),
+                          ),
+                          child: Text(
+                            route,
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
                           ),
                         ),
-                        Text(
-                          'Canli arac sayisi: ${track.liveBusCount}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
+                      )
+                      .toList(growable: false),
+                ),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

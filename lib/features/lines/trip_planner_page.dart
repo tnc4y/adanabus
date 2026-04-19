@@ -391,6 +391,30 @@ class _TripPlannerPageState extends State<TripPlannerPage> {
               ),
             ),
             const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFFAF2),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFCFE8D5)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.bolt, color: Color(0xFF1C7A47), size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Anlik en hizli rota hesaplanir (canli arac + gercek kalkis saatine gore).',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: const Color(0xFF1C7A47),
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
             // Planla Tuşu
             SizedBox(
               width: double.infinity,
@@ -434,7 +458,7 @@ class _TripPlannerPageState extends State<TripPlannerPage> {
             if (_rankedTrips.isNotEmpty) ...[
               const SizedBox(height: 20),
               Text(
-                'En İyi ${_rankedTrips.length} Rota',
+                'En İyi ${_rankedTrips.length} Rota (Anlik)',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -685,6 +709,10 @@ class _TripOptionCard extends StatelessWidget {
             runSpacing: 6,
             children: [
               _TinyMetric(
+                icon: Icons.access_time_filled,
+                label: 'Binis ${trip.estimatedBoardingTimeLabel}',
+              ),
+              _TinyMetric(
                 icon: Icons.directions_walk,
                 label: '${trip.walkToStartMinutes.toStringAsFixed(1)} dk yuru',
               ),
@@ -702,6 +730,32 @@ class _TripOptionCard extends StatelessWidget {
               ),
             ],
           ),
+          if (trip.usesLiveBusData && trip.nearestLiveBusMeters != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF7EE),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: const Color(0xFFCDE8D6)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.directions_bus, size: 14, color: Color(0xFF1C7A47)),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Canli konum: En yakin arac ~${trip.nearestLiveBusMeters!.round()} m',
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            color: const Color(0xFF1C7A47),
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           const SizedBox(height: 8),
            if (trip.isTransfer && trip.transferLine != null)
             Container(

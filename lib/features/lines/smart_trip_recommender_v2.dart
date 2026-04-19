@@ -23,6 +23,9 @@ class RankedTripOption {
     required this.totalMinutes,
     required this.score,
     required this.rank,
+    required this.estimatedBoardingTimeLabel,
+    this.usesLiveBusData = false,
+    this.nearestLiveBusMeters,
     this.isTransfer = false,
     this.transferLine,
     this.transferDirection,
@@ -43,6 +46,9 @@ class RankedTripOption {
   final double totalMinutes;
   final int score;
   final int rank;
+  final String estimatedBoardingTimeLabel;
+  final bool usesLiveBusData;
+  final double? nearestLiveBusMeters;
 
   final bool isTransfer;
   final BusOption? transferLine;
@@ -56,6 +62,18 @@ class _StopWithScore {
   final TransitStop stop;
   final double distance;
   final int frequencyScore;
+}
+
+class _WaitEstimate {
+  const _WaitEstimate({
+    required this.minutes,
+    required this.usesLiveData,
+    this.nearestLiveBusMeters,
+  });
+
+  final double minutes;
+  final bool usesLiveData;
+  final double? nearestLiveBusMeters;
 }
 
 class SmartTripRecommenderV2 {
@@ -163,6 +181,18 @@ class SmartTripRecommenderV2 {
     }
 
     final options = <RankedTripOption>[];
+    final now = DateTime.now();
+    final nowMinutesOfDay = now.hour * 60 + now.minute;
+    final todayDayType = _todayDayType(now);
+    final stopsById = <String, TransitStop>{for (final stop in stops) stop.stopId: stop};
+
+    final nextDepartureCache = await _buildNextDepartureCache(
+      candidateRouteCodes: candidateRouteCodes,
+      liveBuses: liveBuses,
+      apiService: apiService,
+      nowMinutesOfDay: nowMinutesOfDay,
+      todayDayType: todayDayType,
+    );
 
     for (final startStop in startStops) {
       for (final endStop in endStops) {
@@ -218,12 +248,35 @@ class SmartTripRecommenderV2 {
             final busRideMinutes =
                 rideDistanceMeters / _busSpeedMetersPerMinute;
 
-            final waitMinutes = _estimateWaitForDirection(
+            final liveWaitEstimate = _estimateLiveWaitForDirection(
               userPosition: origin,
               routeCode: routeCode,
               direction: direction,
               liveBuses: liveBuses,
             );
+            final leadToStartMinutes = _estimateLeadMinutesToStop(
+              stopId: startStop.stopId,
+              routeOrder: routeOrder,
+              stopsById: stopsById,
+            );
+            final scheduleWaitMinutes = _estimateScheduleWaitMinutes(
+              nowMinutesOfDay: nowMinutesOfDay,
+              terminalToBoardMinutes: leadToStartMinutes,
+              nextDepartureMinutesOfDay: nextDepartureCache['$routeCode|$direction'],
+            );
+
+            var waitMinutes = liveWaitEstimate.minutes;
+            var usesLiveData = liveWaitEstimate.usesLiveData;
+            var nearestLiveBusMeters = liveWaitEstimate.nearestLiveBusMeters;
+            if (scheduleWaitMinutes != null && scheduleWaitMinutes < waitMinutes) {
+              waitMinutes = scheduleWaitMinutes;
+              usesLiveData = false;
+              nearestLiveBusMeters = null;
+            }
+
+            final estimatedBoardingMinutesOfDay =
+                (nowMinutesOfDay + walkToStartMinutes + waitMinutes).round() %
+                    (24 * 60);
 
             final totalMinutes = walkToStartMinutes +
                 waitMinutes +
@@ -252,6 +305,10 @@ class SmartTripRecommenderV2 {
                 totalMinutes: totalMinutes,
                 score: score,
                 rank: 0,
+                estimatedBoardingTimeLabel:
+                    _minutesToTimeLabel(estimatedBoardingMinutesOfDay),
+                usesLiveBusData: usesLiveData,
+                nearestLiveBusMeters: nearestLiveBusMeters,
               ),
             );
           }
@@ -271,10 +328,19 @@ class SmartTripRecommenderV2 {
         lineByCode: lineByCode,
         stopsByRoute: stopsByRoute,
         routeOrderCache: routeOrderCache,
+        stopsById: stopsById,
+        nextDepartureCache: nextDepartureCache,
+        nowMinutesOfDay: nowMinutesOfDay,
       );
     }
 
-    options.sort((a, b) => b.score.compareTo(a.score));
+    options.sort((a, b) {
+      final total = a.totalMinutes.compareTo(b.totalMinutes);
+      if (total != 0) {
+        return total;
+      }
+      return b.score.compareTo(a.score);
+    });
 
     for (var i = 0; i < options.length && i < resultLimit; i++) {
       options[i] = RankedTripOption(
@@ -291,6 +357,9 @@ class SmartTripRecommenderV2 {
         totalMinutes: options[i].totalMinutes,
         score: options[i].score,
         rank: i + 1,
+        estimatedBoardingTimeLabel: options[i].estimatedBoardingTimeLabel,
+        usesLiveBusData: options[i].usesLiveBusData,
+        nearestLiveBusMeters: options[i].nearestLiveBusMeters,
         isTransfer: options[i].isTransfer,
         transferLine: options[i].transferLine,
         transferDirection: options[i].transferDirection,
@@ -313,6 +382,9 @@ class SmartTripRecommenderV2 {
     required Map<String, BusOption> lineByCode,
     required Map<String, List<TransitStop>> stopsByRoute,
     required Map<String, List<String>> routeOrderCache,
+    required Map<String, TransitStop> stopsById,
+    required Map<String, int?> nextDepartureCache,
+    required int nowMinutesOfDay,
   }) {
     var totalIterations = 0;
 
@@ -459,13 +531,13 @@ class SmartTripRecommenderV2 {
                   final secondRideMinutes =
                       secondRideMeters / _busSpeedMetersPerMinute;
 
-                  final wait1 = _estimateWaitForDirection(
+                  final wait1LiveEstimate = _estimateLiveWaitForDirection(
                     userPosition: origin,
                     routeCode: firstLineCode,
                     direction: firstDirection,
                     liveBuses: liveBuses,
                   );
-                  final wait2 = _estimateWaitForDirection(
+                  final wait2LiveEstimate = _estimateLiveWaitForDirection(
                     userPosition: Position(
                       latitude: intermediateStop.latitude,
                       longitude: intermediateStop.longitude,
@@ -482,6 +554,51 @@ class SmartTripRecommenderV2 {
                     direction: lastDirection,
                     liveBuses: liveBuses,
                   );
+                  final firstOrder =
+                      routeOrderCache['$firstLineCode|$firstDirection'] ??
+                          const <String>[];
+                  final secondOrder =
+                      routeOrderCache['$lastLineCode|$lastDirection'] ??
+                          const <String>[];
+
+                  final wait1Schedule = _estimateScheduleWaitMinutes(
+                    nowMinutesOfDay: nowMinutesOfDay,
+                    terminalToBoardMinutes: _estimateLeadMinutesToStop(
+                      stopId: startStop.stopId,
+                      routeOrder: firstOrder,
+                      stopsById: stopsById,
+                    ),
+                    nextDepartureMinutesOfDay:
+                        nextDepartureCache['$firstLineCode|$firstDirection'],
+                  );
+                  final wait2Schedule = _estimateScheduleWaitMinutes(
+                    nowMinutesOfDay: nowMinutesOfDay,
+                    terminalToBoardMinutes: _estimateLeadMinutesToStop(
+                      stopId: intermediateStop.stopId,
+                      routeOrder: secondOrder,
+                      stopsById: stopsById,
+                    ),
+                    nextDepartureMinutesOfDay:
+                        nextDepartureCache['$lastLineCode|$lastDirection'],
+                  );
+
+                  var wait1 = wait1LiveEstimate.minutes;
+                  var usesLiveData = wait1LiveEstimate.usesLiveData;
+                  var nearestLiveBusMeters = wait1LiveEstimate.nearestLiveBusMeters;
+                  if (wait1Schedule != null && wait1Schedule < wait1) {
+                    wait1 = wait1Schedule;
+                    usesLiveData = false;
+                    nearestLiveBusMeters = null;
+                  }
+
+                  var wait2 = wait2LiveEstimate.minutes;
+                  if (wait2Schedule != null && wait2Schedule < wait2) {
+                    wait2 = wait2Schedule;
+                  }
+
+                  final estimatedBoardingMinutesOfDay =
+                      (nowMinutesOfDay + walkToStartMinutes + wait1).round() %
+                          (24 * 60);
 
                   final totalMinutes = walkToStartMinutes +
                       wait1 +
@@ -515,6 +632,10 @@ class SmartTripRecommenderV2 {
                       totalMinutes: totalMinutes,
                       score: score,
                       rank: 0,
+                      estimatedBoardingTimeLabel:
+                          _minutesToTimeLabel(estimatedBoardingMinutesOfDay),
+                      usesLiveBusData: usesLiveData,
+                      nearestLiveBusMeters: nearestLiveBusMeters,
                       isTransfer: true,
                       transferLine: lastLine,
                       transferDirection: lastDirection,
@@ -640,7 +761,7 @@ class SmartTripRecommenderV2 {
     return '';
   }
 
-  static double _estimateWaitForDirection({
+  static _WaitEstimate _estimateLiveWaitForDirection({
     required Position userPosition,
     required String routeCode,
     required String direction,
@@ -656,7 +777,7 @@ class SmartTripRecommenderV2 {
         .toList(growable: false);
 
     if (candidates.isEmpty) {
-      return 9.0;
+      return const _WaitEstimate(minutes: 9.0, usesLiveData: false);
     }
 
     var closestBusDistance = double.infinity;
@@ -673,7 +794,11 @@ class SmartTripRecommenderV2 {
     }
 
     final estimated = closestBusDistance / _busApproachMetersPerMinute;
-    return estimated.clamp(2.0, 20.0);
+    return _WaitEstimate(
+      minutes: estimated.clamp(2.0, 20.0),
+      usesLiveData: true,
+      nearestLiveBusMeters: closestBusDistance,
+    );
   }
 
   static int _calculateScore({
@@ -691,6 +816,257 @@ class SmartTripRecommenderV2 {
     if (wait > 12) penalty += 3;
 
     return (baseScore - penalty).clamp(5, 99);
+  }
+
+  static double _estimateLeadMinutesToStop({
+    required String stopId,
+    required List<String> routeOrder,
+    required Map<String, TransitStop> stopsById,
+  }) {
+    if (routeOrder.length < 2) {
+      return 0;
+    }
+
+    final targetIndex = routeOrder.indexOf(stopId);
+    if (targetIndex <= 0) {
+      return 0;
+    }
+
+    var meters = 0.0;
+    for (var i = 1; i <= targetIndex; i++) {
+      final prev = stopsById[routeOrder[i - 1]];
+      final next = stopsById[routeOrder[i]];
+      if (prev == null || next == null) {
+        continue;
+      }
+      meters += _distanceMeters(
+        prev.latitude,
+        prev.longitude,
+        next.latitude,
+        next.longitude,
+      );
+    }
+    return meters / _busSpeedMetersPerMinute;
+  }
+
+  static double? _estimateScheduleWaitMinutes({
+    required int nowMinutesOfDay,
+    required double terminalToBoardMinutes,
+    required int? nextDepartureMinutesOfDay,
+  }) {
+    if (nextDepartureMinutesOfDay == null) {
+      return null;
+    }
+
+    final arrivalAtStop =
+        (nextDepartureMinutesOfDay + terminalToBoardMinutes).round();
+    var wait = arrivalAtStop - nowMinutesOfDay;
+    if (wait < 0) {
+      wait += 24 * 60;
+    }
+
+    return wait.clamp(0, 240).toDouble();
+  }
+
+  static Future<Map<String, int?>> _buildNextDepartureCache({
+    required Set<String> candidateRouteCodes,
+    required List<BusVehicle> liveBuses,
+    required AdanaApiService apiService,
+    required int nowMinutesOfDay,
+    required int todayDayType,
+  }) async {
+    final result = <String, int?>{};
+
+    for (final routeCode in candidateRouteCodes) {
+      for (final direction in const ['0', '1']) {
+        final key = '$routeCode|$direction';
+        result[key] = await _resolveNextDepartureForRouteDirection(
+          routeCode: routeCode,
+          direction: direction,
+          liveBuses: liveBuses,
+          apiService: apiService,
+          nowMinutesOfDay: nowMinutesOfDay,
+          todayDayType: todayDayType,
+        );
+      }
+    }
+
+    return result;
+  }
+
+  static Future<int?> _resolveNextDepartureForRouteDirection({
+    required String routeCode,
+    required String direction,
+    required List<BusVehicle> liveBuses,
+    required AdanaApiService apiService,
+    required int nowMinutesOfDay,
+    required int todayDayType,
+  }) async {
+    final candidateBusIds = <String>[];
+    final seen = <String>{};
+    for (final bus in liveBuses) {
+      final id = bus.id.trim();
+      if (id.isEmpty || !seen.add(id)) {
+        continue;
+      }
+      if (bus.displayRouteCode == routeCode && bus.direction == direction) {
+        candidateBusIds.add(id);
+      }
+    }
+
+    if (candidateBusIds.isEmpty) {
+      return null;
+    }
+
+    int? best;
+    for (final busId in candidateBusIds.take(6)) {
+      try {
+        final dynamic raw = await apiService.fetchStopBusTimeByBusId(busId);
+        final payload = raw is Map<String, dynamic>
+            ? raw
+            : <String, dynamic>{'data': raw};
+        final times = _extractTimesForDayType(payload, todayDayType);
+
+        for (final time in times) {
+          final minutes = _timeStringToMinutes(time);
+          if (minutes == null) {
+            continue;
+          }
+          var candidate = minutes;
+          if (candidate < nowMinutesOfDay) {
+            candidate += 24 * 60;
+          }
+          if (best == null || candidate < best) {
+            best = candidate;
+          }
+        }
+      } catch (_) {
+        continue;
+      }
+    }
+
+    if (best == null) {
+      return null;
+    }
+    return best % (24 * 60);
+  }
+
+  static List<String> _extractTimesForDayType(Map<String, dynamic> payload, int dayType) {
+    final found = <String>{};
+    final timePattern = RegExp(r'\b(?:[01]?\d|2[0-3]):[0-5]\d\b');
+    final dateLikePattern = RegExp(r'\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b');
+
+    bool isScheduleKey(String? key) {
+      final k = (key ?? '').toLowerCase().replaceAll('_', '');
+      return k.contains('saat') ||
+          k.contains('time') ||
+          k.contains('hour') ||
+          k.contains('kalkis') ||
+          k.contains('departure') ||
+          k.contains('sefer');
+    }
+
+    bool isNoiseKey(String? key) {
+      final k = (key ?? '').toLowerCase().replaceAll('_', '');
+      return k.contains('update') ||
+          k.contains('timestamp') ||
+          k.contains('created') ||
+          k.contains('modified') ||
+          k.contains('date') ||
+          k.contains('guncel') ||
+          k.contains('refresh') ||
+          k.contains('last');
+    }
+
+    int? parseDayTypeFromMap(Map map, int? inherited) {
+      var resolved = inherited;
+      for (final entry in map.entries) {
+        final key = entry.key.toString().toLowerCase().replaceAll('_', '');
+        if (key == 'daytype' || key == 'day') {
+          final parsed = int.tryParse(entry.value.toString().trim());
+          if (parsed != null) {
+            resolved = parsed;
+            break;
+          }
+        }
+      }
+      return resolved;
+    }
+
+    void walk(dynamic node, int? inheritedDayType, String? keyHint) {
+      if (node is Map) {
+        final resolvedDayType = parseDayTypeFromMap(node, inheritedDayType);
+        for (final entry in node.entries) {
+          walk(entry.value, resolvedDayType, entry.key.toString());
+        }
+        return;
+      }
+
+      if (node is List) {
+        for (final item in node) {
+          walk(item, inheritedDayType, keyHint);
+        }
+        return;
+      }
+
+      if (node == null || inheritedDayType != dayType) {
+        return;
+      }
+
+      final text = node.toString();
+      if (text.trim().isEmpty ||
+          dateLikePattern.hasMatch(text) ||
+          isNoiseKey(keyHint) ||
+          !timePattern.hasMatch(text)) {
+        return;
+      }
+
+      if (!isScheduleKey(keyHint) && text.length > 64) {
+        return;
+      }
+
+      for (final match in timePattern.allMatches(text)) {
+        final value = match.group(0);
+        if (value != null) {
+          found.add(value);
+        }
+      }
+    }
+
+    walk(payload, null, null);
+    final sorted = found.toList(growable: false);
+    sorted.sort((a, b) => (_timeStringToMinutes(a) ?? 0).compareTo(_timeStringToMinutes(b) ?? 0));
+    return sorted;
+  }
+
+  static int _todayDayType(DateTime now) {
+    if (now.weekday == DateTime.saturday) {
+      return 6;
+    }
+    if (now.weekday == DateTime.sunday) {
+      return 7;
+    }
+    return 0;
+  }
+
+  static int? _timeStringToMinutes(String value) {
+    final parts = value.split(':');
+    if (parts.length != 2) {
+      return null;
+    }
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) {
+      return null;
+    }
+    return (hour * 60) + minute;
+  }
+
+  static String _minutesToTimeLabel(int minutesOfDay) {
+    final normalized = ((minutesOfDay % (24 * 60)) + (24 * 60)) % (24 * 60);
+    final hour = (normalized ~/ 60).toString().padLeft(2, '0');
+    final minute = (normalized % 60).toString().padLeft(2, '0');
+    return '$hour:$minute';
   }
 
   static double _distanceMeters(
