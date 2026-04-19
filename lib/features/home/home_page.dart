@@ -36,7 +36,6 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final AdanaApiService _apiService = AdanaApiService();
-  final PageController _carouselController = PageController(viewportFraction: 0.84);
   static const double _etaMetersPerMinute = 320;
 
   bool _editMode = false;
@@ -78,7 +77,6 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _refreshTimer?.cancel();
     _warmupRetryTimer?.cancel();
-    _carouselController.dispose();
     super.dispose();
   }
 
@@ -601,46 +599,51 @@ class _HomePageState extends State<HomePage> {
                         ],
                       )
                     else
-                      SizedBox(
-                        height: 260,
-                        child: PageView.builder(
-                          controller: _carouselController,
-                          itemCount: entries.length + 1,
-                          itemBuilder: (context, index) {
-                            if (index == entries.length) {
-                              return Padding(
-                                padding: const EdgeInsets.only(right: 10),
-                                child: _CarouselManageCard(
-                                  onTap: () {
-                                    setState(() {
-                                      _editMode = true;
-                                    });
-                                  },
-                                ),
-                              );
-                            }
-                            final entry = entries[index];
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 10),
-                              child: _FavoriteHomeCard(
-                                entry: entry,
-                                liveSummary: entry.kind == FavoriteHomeEntryKind.stop
-                                    ? StopLiveSummaryService.summarizeStop(
-                                        _favoriteStopToTransitStop(entry.stop!),
-                                        _liveBuses,
-                                      )
-                                    : null,
-                                approachingBuses: entry.kind == FavoriteHomeEntryKind.stop
-                                    ? (_routeAwareApproachingByStopId[entry.stop!.stopId] ??
-                                        _buildFallbackApproachingForStop(entry.stop!))
-                                    : const <_HomeApproachingBus>[],
-                                onTap: () {
-                                  _openFavoriteEntry(entry);
-                                },
-                              ),
-                            );
-                          },
-                        ),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final cardWidth = (constraints.maxWidth / 2.2).clamp(150.0, 220.0);
+                          final cardHeight = 206.0;
+                          return SizedBox(
+                            height: cardHeight,
+                            child: ListView.separated(
+                              scrollDirection: Axis.horizontal,
+                              itemCount: entries.length + 1,
+                              separatorBuilder: (_, __) => const SizedBox(width: 10),
+                              itemBuilder: (context, index) {
+                                if (index == entries.length) {
+                                  return SizedBox(
+                                    width: cardWidth,
+                                    child: _CarouselManageCard(
+                                      onTap: () {
+                                        setState(() {
+                                          _editMode = true;
+                                        });
+                                      },
+                                    ),
+                                  );
+                                }
+                                final entry = entries[index];
+                                return SizedBox(
+                                  width: cardWidth,
+                                  child: _FavoriteMiniCarouselCard(
+                                    entry: entry,
+                                    liveSummary: entry.kind == FavoriteHomeEntryKind.stop
+                                        ? StopLiveSummaryService.summarizeStop(
+                                            _favoriteStopToTransitStop(entry.stop!),
+                                            _liveBuses,
+                                          )
+                                        : null,
+                                    approachingBuses: entry.kind == FavoriteHomeEntryKind.stop
+                                        ? (_routeAwareApproachingByStopId[entry.stop!.stopId] ??
+                                            _buildFallbackApproachingForStop(entry.stop!))
+                                        : const <_HomeApproachingBus>[],
+                                    onTap: () => _openFavoriteEntry(entry),
+                                  ),
+                                );
+                              },
+                            ),
+                          );
+                        },
                       ),
                     if (_isLoadingRouteAwareApproaching)
                       const Padding(
@@ -851,8 +854,8 @@ class _NearestStopCard extends StatelessWidget {
   }
 }
 
-class _FavoriteHomeCard extends StatelessWidget {
-  const _FavoriteHomeCard({
+class _FavoriteMiniCarouselCard extends StatelessWidget {
+  const _FavoriteMiniCarouselCard({
     required this.entry,
     required this.onTap,
     required this.liveSummary,
@@ -866,192 +869,171 @@ class _FavoriteHomeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (accent, icon) = switch (entry.kind) {
-      FavoriteHomeEntryKind.line => (const Color(0xFF0A4FB5), Icons.route),
-      FavoriteHomeEntryKind.stop => (const Color(0xFF1C7A47), Icons.location_on_rounded),
-      FavoriteHomeEntryKind.route => (const Color(0xFFE17900), Icons.map_rounded),
-    };
+    final isStop = entry.kind == FavoriteHomeEntryKind.stop;
+    final isLine = entry.kind == FavoriteHomeEntryKind.line;
+    final accent = isStop
+        ? const Color(0xFF1C7A47)
+        : isLine
+            ? const Color(0xFF0A4FB5)
+            : const Color(0xFFE17900);
+    final icon = isStop
+        ? Icons.location_on_rounded
+        : isLine
+            ? Icons.route
+            : Icons.map_rounded;
+    final tag = isStop
+        ? 'Durak'
+        : isLine
+            ? 'Hat'
+            : 'Rota';
+    final primaryText = isLine ? (entry.line?.routeCode ?? entry.title) : entry.title;
+    final subtitleText = isLine ? (entry.line?.routeName ?? entry.subtitle) : entry.subtitle;
+    final firstEta = approachingBuses.isNotEmpty ? approachingBuses.first.etaMinutes : null;
 
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(24),
+      borderRadius: BorderRadius.circular(20),
       elevation: 0,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(20),
         child: Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(color: accent.withValues(alpha: 0.15), width: 1.5),
             gradient: LinearGradient(
-              colors: [
-                accent.withValues(alpha: 0.06),
-                Colors.white,
-              ],
+              colors: [accent.withValues(alpha: 0.12), Colors.white],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
           ),
-          padding: const EdgeInsets.all(18),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Header
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.white.withValues(alpha: 0.85),
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(icon, color: accent, size: 22),
+                    child: Icon(icon, color: accent, size: 18),
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          entry.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.3,
-                              ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        tag,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: accent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
                         ),
-                        const SizedBox(height: 4),
-                        Text(
-                          entry.subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: const Color(0xFF5E6B82),
-                                fontWeight: FontWeight.w500,
-                              ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ],
               ),
-              
-              // Content for stop items
-              if (entry.kind == FavoriteHomeEntryKind.stop && liveSummary != null)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              const SizedBox(height: 10),
+              Expanded(
+                child: Stack(
                   children: [
-                    const SizedBox(height: 14),
-                    if (approachingBuses.isNotEmpty) ...[
-                      ...approachingBuses.take(3).map((bus) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: _BusApproachingRow(bus: bus),
-                      )),
-                      if (approachingBuses.length > 3)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            '+${approachingBuses.length - 3} daha',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: const Color(0xFF8A95A8),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                          ),
-                        ),
-                    ] else
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          'Yakın araç verisi bekleniyor',
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: const Color(0xFF8A95A8),
+                    Positioned(
+                      right: -6,
+                      bottom: -10,
+                      child: Icon(
+                        icon,
+                        size: 58,
+                        color: accent.withValues(alpha: 0.08),
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          primaryText,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.2,
+                                height: 1.15,
                               ),
                         ),
-                      ),
+                        const SizedBox(height: 6),
+                        Text(
+                          subtitleText,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: const Color(0xFF5E6B82),
+                                fontWeight: FontWeight.w600,
+                              ),
+                        ),
+                      ],
+                    ),
                   ],
-                )
-              else
-                Padding(
-                  padding: const EdgeInsets.only(top: 12),
-                  child: Row(
-                    children: [
-                      Icon(Icons.arrow_forward_rounded, 
-                        size: 16, 
-                        color: accent.withValues(alpha: 0.6),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        entry.kind == FavoriteHomeEntryKind.line
-                            ? 'Detayı aç'
-                            : entry.kind == FavoriteHomeEntryKind.route
-                                ? 'Rotayı aç'
-                                : 'Detayı aç',
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.88),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: accent.withValues(alpha: 0.18)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      isStop ? Icons.access_time_filled_rounded : Icons.info_rounded,
+                      size: 15,
+                      color: accent,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        isStop
+                            ? (firstEta == null
+                                ? 'Yaklasan arac bekleniyor'
+                                : 'En yakin arac: $firstEta dk')
+                            : isLine
+                                ? 'Hat detayina git'
+                                : 'Rota detayina git',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: accent.withValues(alpha: 0.8),
-                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF33445F),
+                              fontWeight: FontWeight.w700,
                             ),
                       ),
-                    ],
+                    ),
+                  ],
+                ),
+              ),
+              if (isStop && liveSummary != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Canli arac: ${liveSummary!.liveBusCount}',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: const Color(0xFF607089),
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
                 ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _BusApproachingRow extends StatelessWidget {
-  const _BusApproachingRow({required this.bus});
-
-  final _HomeApproachingBus bus;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF5F7FA),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE2E7F0), width: 0.8),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0A4FB5),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              bus.routeCode,
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
-            ),
-          ),
-          const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1C7A47).withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              '${bus.etaMinutes} dk',
-              style: const TextStyle(
-                color: Color(0xFF1C7A47),
-                fontWeight: FontWeight.w700,
-                fontSize: 13,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

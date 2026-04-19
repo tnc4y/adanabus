@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../data/services/adana_api_service.dart';
 import '../../data/models/bus_vehicle.dart';
+import '../shared/geo_math_utils.dart';
 import 'line_detail_models.dart';
 import 'line_detail_overlays.dart';
 import 'line_timetable_page.dart';
@@ -475,19 +476,12 @@ class _LineDetailPageState extends State<LineDetailPage> {
           '${widget.routeName} (${widget.routeCode})',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+          ),
         ),
-        actions: [
-          IconButton(
-            onPressed: _isLoading ? null : _toggleDirection,
-            icon: const Icon(Icons.swap_horiz),
-            tooltip: _currentDirection == '1' ? 'Gidise gec' : 'Donuse gec',
-          ),
-          IconButton(
-            onPressed: _openTimetablePage,
-            icon: const Icon(Icons.schedule),
-            tooltip: 'Cikis saatleri',
-          ),
-        ],
+        centerTitle: true,
       ),
       body: Stack(
         children: [
@@ -693,14 +687,23 @@ class _LineDetailPageState extends State<LineDetailPage> {
                             padding: const EdgeInsets.symmetric(horizontal: 4),
                             child: LineDetailVehicleFloatingCard(
                               bus: bus,
-                              routeCode: widget.routeCode,
-                              direction: _currentDirection,
+                              progress: _buildVehicleRouteProgress(bus),
                             ),
                           );
                         },
                       ),
               ),
             ),
+          Positioned(
+            right: 14,
+            bottom: 160,
+            child: _LineDetailFloatingActions(
+              onToggleDirection: _isLoading ? null : _toggleDirection,
+              onOpenTimetable: _openTimetablePage,
+              directionTooltip:
+                  _currentDirection == '1' ? 'Gidise gec' : 'Donuse gec',
+            ),
+          ),
           if (_isLoading)
             Positioned.fill(
               child: Container(
@@ -731,18 +734,15 @@ class _LineDetailPageState extends State<LineDetailPage> {
   }
 
   LineStop? _resolveSelectedStop(List<LineStop> stops, LineStop? previous) {
-    if (stops.isEmpty) {
+    if (stops.isEmpty || previous == null) {
       return null;
-    }
-    if (previous == null) {
-      return stops.first;
     }
     for (final stop in stops) {
       if (stop.key == previous.key) {
         return stop;
       }
     }
-    return stops.first;
+    return null;
   }
 
   static List<dynamic> _asList(dynamic value) {
@@ -1217,6 +1217,84 @@ class _LineDetailPageState extends State<LineDetailPage> {
     return (hour * 60) + minute;
   }
 
+  VehicleRouteProgress? _buildVehicleRouteProgress(BusVehicle bus) {
+    if (!bus.hasLocation || _stops.isEmpty) {
+      return null;
+    }
+
+    final totalStops = _stops.length;
+    final startStopName = _stops.first.name;
+    final endStopName = _stops.last.name;
+
+    int nextStopIndex;
+
+    if (_pathPoints.length > 1) {
+      final busPathIndex = GeoMathUtils.nearestPointIndex(
+        _pathPoints,
+        bus.latitude!,
+        bus.longitude!,
+      );
+
+      if (busPathIndex >= 0) {
+        final stopPathIndexes = _stops
+            .map(
+              (stop) => GeoMathUtils.nearestPointIndex(
+                _pathPoints,
+                stop.latitude,
+                stop.longitude,
+              ),
+            )
+            .toList(growable: false);
+
+        nextStopIndex = stopPathIndexes.indexWhere(
+          (index) => index >= 0 && index >= busPathIndex,
+        );
+        if (nextStopIndex < 0) {
+          nextStopIndex = totalStops - 1;
+        }
+      } else {
+        nextStopIndex = _fallbackNextStopIndexByDistance(bus);
+      }
+    } else {
+      nextStopIndex = _fallbackNextStopIndexByDistance(bus);
+    }
+
+    nextStopIndex = nextStopIndex.clamp(0, totalStops - 1);
+    final remainingStops = (totalStops - nextStopIndex).clamp(0, totalStops);
+    final progress = totalStops <= 1
+        ? 1.0
+        : (nextStopIndex / (totalStops - 1)).clamp(0.0, 1.0);
+
+    return VehicleRouteProgress(
+      progress: progress,
+      remainingStops: remainingStops,
+      startStopName: startStopName,
+      nextStopName: _stops[nextStopIndex].name,
+      endStopName: endStopName,
+    );
+  }
+
+  int _fallbackNextStopIndexByDistance(BusVehicle bus) {
+    var nearestIndex = 0;
+    var nearestMeters = double.infinity;
+
+    for (var i = 0; i < _stops.length; i++) {
+      final stop = _stops[i];
+      final meters = _distanceMeters(
+        bus.latitude!,
+        bus.longitude!,
+        stop.latitude,
+        stop.longitude,
+      );
+      if (meters < nearestMeters) {
+        nearestMeters = meters;
+        nearestIndex = i;
+      }
+    }
+
+    return math.min(nearestIndex + 1, _stops.length - 1);
+  }
+
   LatLng _resolveRouteCenter() {
     if (_stops.isNotEmpty) {
       final middleIndex = _stops.length ~/ 2;
@@ -1284,4 +1362,43 @@ class _LineDetailPageState extends State<LineDetailPage> {
     _lastMapZoom = 13.2;
   }
 
+}
+
+class _LineDetailFloatingActions extends StatelessWidget {
+  const _LineDetailFloatingActions({
+    required this.onToggleDirection,
+    required this.onOpenTimetable,
+    required this.directionTooltip,
+  });
+
+  final VoidCallback? onToggleDirection;
+  final VoidCallback onOpenTimetable;
+  final String directionTooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 4,
+      borderRadius: BorderRadius.circular(14),
+      color: Colors.white.withValues(alpha: 0.95),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              onPressed: onToggleDirection,
+              icon: const Icon(Icons.swap_horiz),
+              tooltip: directionTooltip,
+            ),
+            IconButton(
+              onPressed: onOpenTimetable,
+              icon: const Icon(Icons.schedule),
+              tooltip: 'Cikis saatleri',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }

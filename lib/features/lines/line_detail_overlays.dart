@@ -7,18 +7,19 @@ class LineDetailVehicleFloatingCard extends StatelessWidget {
   const LineDetailVehicleFloatingCard({
     super.key,
     required this.bus,
-    required this.routeCode,
-    required this.direction,
+    required this.progress,
   });
 
   final BusVehicle bus;
-  final String routeCode;
-  final String direction;
+  final VehicleRouteProgress? progress;
 
   @override
   Widget build(BuildContext context) {
-    final lat = bus.latitude?.toStringAsFixed(5) ?? '-';
-    final lon = bus.longitude?.toStringAsFixed(5) ?? '-';
+    final progressInfo = progress;
+    final percent = ((progressInfo?.progress ?? 0) * 100).round();
+    final routeSummary = progressInfo == null
+        ? (bus.id.isEmpty ? 'Arac' : 'Arac ${bus.id}')
+        : '${progressInfo.startStopName} >> ${progressInfo.endStopName}';
 
     return Material(
       elevation: 4,
@@ -35,27 +36,55 @@ class LineDetailVehicleFloatingCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    bus.id.isEmpty ? 'Arac' : 'Arac ${bus.id}',
+                    routeSummary,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
                 Text(
-                  direction == '1' ? 'Donus' : 'Gidis',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  '%$percent',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF175E2F),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 6),
-            Text('Hat: $routeCode'),
-            if (bus.name.isNotEmpty)
+            if (progressInfo == null)
+              const Text(
+                'Durak ilerleme bilgisi hazirlaniyor...',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              )
+            else ...[
               Text(
-                bus.name,
+                'Gelecek durak: ${progressInfo.nextStopName}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontWeight: FontWeight.w700),
               ),
-            Text('Konum: $lat, $lon'),
+              const SizedBox(height: 6),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: LinearProgressIndicator(
+                  value: progressInfo.progress,
+                  minHeight: 8,
+                  backgroundColor: const Color(0xFFE6EBF4),
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                    Color(0xFF0B5A25),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Kalan durak: ${progressInfo.remainingStops}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1C4B85),
+                ),
+              ),
+            ],
           ],
         ),
       ),

@@ -40,3 +40,19 @@ class BusEtaCandidate {
   final String busId;
   final int etaMinutes;
 }
+
+class VehicleRouteProgress {
+  const VehicleRouteProgress({
+    required this.progress,
+    required this.remainingStops,
+    required this.startStopName,
+    required this.nextStopName,
+    required this.endStopName,
+  });
+
+  final double progress;
+  final int remainingStops;
+  final String startStopName;
+  final String nextStopName;
+  final String endStopName;
+}
