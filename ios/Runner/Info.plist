@@ -45,5 +45,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Konumunuz en yakin durak ve uygun yon onermek icin kullanilir.</string>
 </dict>
 </plist>
