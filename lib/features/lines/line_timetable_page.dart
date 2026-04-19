@@ -268,7 +268,7 @@ class _LineTimetablePageState extends State<LineTimetablePage> {
   @override
   Widget build(BuildContext context) {
     final tripFrom =
-        _data.fromStop.isEmpty ? widget.fromStopName : _data.fromStop;
+        _normalizeDepartureStop(_data.fromStop, widget.fromStopName);
     final nearest = _findNearestOccurrence();
     final todayBucket = _bucketForDate(DateTime.now());
 
@@ -404,6 +404,14 @@ class _LineTimetablePageState extends State<LineTimetablePage> {
       ),
     );
   }
+
+  String _normalizeDepartureStop(String parsed, String fallback) {
+    final normalized = parsed.trim();
+    if (normalized.length < 3) {
+      return fallback;
+    }
+    return normalized;
+  }
 }
 
 class _TimetableOccurrence {
@@ -507,7 +515,7 @@ class _TimetableHeaderCard extends StatelessWidget {
             ),
             if (apiUpdatedAt != null)
               Text(
-                'API son guncelleme: ${_formatClock(apiUpdatedAt!)}',
+                'Son güncelleme: ${_formatDate(apiUpdatedAt!)}',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -576,10 +584,11 @@ class _TimetableHeaderCard extends StatelessWidget {
     );
   }
 
-  String _formatClock(DateTime value) {
-    final h = value.hour.toString().padLeft(2, '0');
-    final m = value.minute.toString().padLeft(2, '0');
-    return '$h:$m';
+  String _formatDate(DateTime value) {
+    final d = value.day.toString().padLeft(2, '0');
+    final m = value.month.toString().padLeft(2, '0');
+    final y = value.year.toString();
+    return '$d.$m.$y';
   }
 
   String _formatNearestOccurrenceLabel(DateTime date, String time) {

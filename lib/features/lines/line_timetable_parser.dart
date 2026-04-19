@@ -172,8 +172,8 @@ class TimetableDataParser {
     }
 
     return TimetableData(
-      fromStop: from.isEmpty ? fallbackFrom : from,
-      toStop: to.isEmpty ? fallbackTo : to,
+      fromStop: _sanitizeStopName(from, fallbackFrom),
+      toStop: _sanitizeStopName(to, fallbackTo),
       apiUpdatedAt: apiUpdatedAt,
       weekdayTimes: _sortTimes(weekday),
       saturdayTimes: _sortTimes(saturday),
@@ -442,6 +442,9 @@ class TimetableDataParser {
 
   static bool _looksLikeUpdateKey(String keyPath) {
     final k = keyPath.toLowerCase().replaceAll('_', '');
+    if (k.contains('daytype')) {
+      return false;
+    }
     return k.contains('update') ||
         k.contains('updated') ||
         k.contains('timestamp') ||
@@ -495,18 +498,23 @@ class TimetableDataParser {
       }
     }
 
-    final clockOnly =
-        RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$').firstMatch(text);
-    if (clockOnly != null) {
-      final hour = int.tryParse(clockOnly.group(1)!);
-      final minute = int.tryParse(clockOnly.group(2)!);
-      final second = int.tryParse(clockOnly.group(3) ?? '0') ?? 0;
-      if (hour != null && minute != null) {
-        final now = DateTime.now();
-        return DateTime(now.year, now.month, now.day, hour, minute, second);
-      }
-    }
-
     return null;
+  }
+
+  static String _sanitizeStopName(String value, String fallback) {
+    final cleaned = value
+        .replaceAll(
+            RegExp(r'^(from|to|kalkis|varis|baslangic|bitis)\s*[:=-]\s*',
+                caseSensitive: false),
+            '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (cleaned.length < 3) {
+      return fallback;
+    }
+    if (_timeExp.hasMatch(cleaned)) {
+      return fallback;
+    }
+    return cleaned;
   }
 }
