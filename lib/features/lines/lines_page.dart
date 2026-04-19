@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme_utils.dart';
 import '../../data/models/bus_option.dart';
 import '../../data/services/adana_api_service.dart';
 import '../favorites/favorites_controller.dart';
@@ -116,7 +117,7 @@ class _LinesPageState extends State<LinesPage> {
                     padding: const EdgeInsets.all(10),
                     margin: const EdgeInsets.only(bottom: 10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFFF1EE),
+                      color: AppThemeUtils.getDisabledColor(context),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(_error!),

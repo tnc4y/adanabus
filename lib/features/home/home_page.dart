@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../../core/theme_utils.dart';
 import '../../data/models/bus_vehicle.dart';
 import '../../data/models/transit_stop.dart';
 import '../../data/services/adana_api_service.dart';
@@ -17,6 +18,7 @@ import '../shared/kentkart_path_utils.dart';
 import '../shared/stop_live_summary_service.dart';
 import '../stops/stop_detail_page.dart';
 import '../stops/stop_picker_page.dart';
+import 'home_widgets.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -47,8 +49,8 @@ class _HomePageState extends State<HomePage> {
   List<BusVehicle> _liveBuses = <BusVehicle>[];
   List<TransitStop> _allStops = <TransitStop>[];
   final Map<String, TransitStop> _catalogByStopId = <String, TransitStop>{};
-  Map<String, List<_HomeApproachingBus>> _routeAwareApproachingByStopId =
-      const <String, List<_HomeApproachingBus>>{};
+  Map<String, List<HomeApproachingBus>> _routeAwareApproachingByStopId =
+      const <String, List<HomeApproachingBus>>{};
   bool _isLoadingRouteAwareApproaching = false;
   String _homeStopEntrySignature = '';
   Position? _position;
@@ -260,8 +262,8 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  List<_HomeApproachingBus> _buildFallbackApproachingForStop(FavoriteStopItem stop) {
-    final list = <_HomeApproachingBus>[];
+  List<HomeApproachingBus> _buildFallbackApproachingForStop(FavoriteStopItem stop) {
+    final list = <HomeApproachingBus>[];
     for (final bus in _liveBuses) {
       if (!bus.hasLocation) {
         continue;
@@ -284,7 +286,7 @@ class _HomePageState extends State<HomePage> {
       final direction = bus.direction == '1' ? 'Donus' : 'Gidis';
 
       list.add(
-        _HomeApproachingBus(
+        HomeApproachingBus(
           routeCode: routeCode,
           direction: direction,
           etaMinutes: etaMinutes,
@@ -306,7 +308,7 @@ class _HomePageState extends State<HomePage> {
     if (stops.isEmpty) {
       if (mounted) {
         setState(() {
-          _routeAwareApproachingByStopId = const <String, List<_HomeApproachingBus>>{};
+          _routeAwareApproachingByStopId = const <String, List<HomeApproachingBus>>{};
           _isLoadingRouteAwareApproaching = false;
         });
       }
@@ -327,7 +329,7 @@ class _HomePageState extends State<HomePage> {
           ..addEntries(catalog.map((stop) => MapEntry(stop.stopId, stop)));
       }
 
-      final result = <String, List<_HomeApproachingBus>>{};
+      final result = <String, List<HomeApproachingBus>>{};
       for (final stop in stops) {
         final routeAware = await _loadRouteAwareApproachingForStop(stop);
         if (routeAware.isNotEmpty) {
@@ -362,15 +364,15 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<List<_HomeApproachingBus>> _loadRouteAwareApproachingForStop(
+  Future<List<HomeApproachingBus>> _loadRouteAwareApproachingForStop(
     FavoriteStopItem stop,
   ) async {
     final routeCodes = _resolveRouteCodesForFavoriteStop(stop);
     if (routeCodes.isEmpty) {
-      return const <_HomeApproachingBus>[];
+      return const <HomeApproachingBus>[];
     }
 
-    final rawApproaching = <_HomeApproachingBus>[];
+    final rawApproaching = <HomeApproachingBus>[];
     final dedupeKeys = <String>{};
 
     for (final routeCode in routeCodes) {
@@ -449,7 +451,7 @@ class _HomePageState extends State<HomePage> {
               }
 
               rawApproaching.add(
-                _HomeApproachingBus(
+                HomeApproachingBus(
                   routeCode: routeLabel,
                   direction: directionLabel,
                   etaMinutes: etaMinutes,
@@ -535,14 +537,17 @@ class _HomePageState extends State<HomePage> {
           appBar: AppBar(
             title: const Text('AdanaBus'),
           ),
+          
           body: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFFF3F8FF), Color(0xFFE7F0FF), Color(0xFFF8FBFF)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-            ),
+            decoration: Theme.of(context).brightness == Brightness.dark
+                ? BoxDecoration(color: Theme.of(context).scaffoldBackgroundColor)
+                : const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Color(0xFFF3F8FF), Color(0xFFE7F0FF), Color(0xFFF8FBFF)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
+                  ),
             child: SafeArea(
               child: RefreshIndicator(
                 onRefresh: () async {
@@ -564,7 +569,7 @@ class _HomePageState extends State<HomePage> {
                         Text(
                           '${entries.length}',
                           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: const Color(0xFF5E6B82),
+                                color: AppThemeUtils.getSecondaryTextColor(context),
                                 fontWeight: FontWeight.w700,
                               ),
                         ),
@@ -572,14 +577,14 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 14),
                     if (entries.isEmpty)
-                      _EmptyFavoritesHero(
+                      HomeEmptyFavoritesHero(
                         onOpenLines: widget.onOpenLines,
                         onOpenFavorites: widget.onOpenFavorites,
                       )
                     else if (_editMode)
                       Column(
                         children: [
-                          _ReorderFavoritesList(
+                          HomeReorderFavoritesList(
                             entries: entries,
                             onReorder: widget.favoritesController.reorderHomeEntry,
                           ),
@@ -613,7 +618,7 @@ class _HomePageState extends State<HomePage> {
                                 if (index == entries.length) {
                                   return SizedBox(
                                     width: cardWidth,
-                                    child: _CarouselManageCard(
+                                    child: HomeCarouselManageCard(
                                       onTap: () {
                                         setState(() {
                                           _editMode = true;
@@ -625,7 +630,7 @@ class _HomePageState extends State<HomePage> {
                                 final entry = entries[index];
                                 return SizedBox(
                                   width: cardWidth,
-                                  child: _FavoriteMiniCarouselCard(
+                                  child: HomeFavoriteMiniCarouselCard(
                                     entry: entry,
                                     liveSummary: entry.kind == FavoriteHomeEntryKind.stop
                                         ? StopLiveSummaryService.summarizeStop(
@@ -636,7 +641,7 @@ class _HomePageState extends State<HomePage> {
                                     approachingBuses: entry.kind == FavoriteHomeEntryKind.stop
                                         ? (_routeAwareApproachingByStopId[entry.stop!.stopId] ??
                                             _buildFallbackApproachingForStop(entry.stop!))
-                                        : const <_HomeApproachingBus>[],
+                                        : const <HomeApproachingBus>[],
                                     onTap: () => _openFavoriteEntry(entry),
                                   ),
                                 );
@@ -651,7 +656,7 @@ class _HomePageState extends State<HomePage> {
                         child: LinearProgressIndicator(minHeight: 2),
                       ),
                     const SizedBox(height: 18),
-                    _QuickActionsRow(
+                    HomeQuickActionsRow(
                       onOpenPlanner: _openPlanner,
                       onOpenStops: _openStopPicker,
                       onOpenFavorites: widget.onOpenFavorites,
@@ -659,7 +664,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(height: 20),
                     if (_nearestStop != null)
-                      _NearestStopCard(
+                      HomeNearestStopCard(
                         stop: _nearestStop!,
                         summary: _nearestSummary,
                         onAdd: _addNearestStopToFavorites,
@@ -680,7 +685,7 @@ class _HomePageState extends State<HomePage> {
                       ),
                     const SizedBox(height: 14),
                     if (_error != null)
-                      _InlineErrorCard(message: _error!),
+                      HomeInlineErrorCard(message: _error!),
                   ],
                 ),
               ),
@@ -738,594 +743,3 @@ class _HomePageState extends State<HomePage> {
     );
   }
 }
-
-class _QuickActionsRow extends StatelessWidget {
-  const _QuickActionsRow({
-    required this.onOpenPlanner,
-    required this.onOpenStops,
-    required this.onOpenFavorites,
-    required this.onRefreshGps,
-  });
-
-  final VoidCallback onOpenPlanner;
-  final VoidCallback onOpenStops;
-  final VoidCallback onOpenFavorites;
-  final Future<void> Function() onRefreshGps;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _ActionButton(
-            icon: Icons.route,
-            label: 'Rota Belirle',
-            onTap: onOpenPlanner,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _ActionButton(
-            icon: Icons.place_outlined,
-            label: 'Duraklar',
-            onTap: onOpenStops,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _ActionButton(
-            icon: Icons.star,
-            label: 'Favoriler',
-            onTap: onOpenFavorites,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _ActionButton(
-            icon: Icons.gps_fixed,
-            label: 'GPS',
-            onTap: () => onRefreshGps(),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _NearestStopCard extends StatelessWidget {
-  const _NearestStopCard({
-    required this.stop,
-    required this.summary,
-    required this.onAdd,
-    required this.onOpenStop,
-  });
-
-  final TransitStop stop;
-  final StopLiveSummary? summary;
-  final VoidCallback onAdd;
-  final VoidCallback onOpenStop;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: const Color(0xFFF4FAF6),
-      borderRadius: BorderRadius.circular(18),
-      elevation: 1,
-      child: InkWell(
-        onTap: onOpenStop,
-        borderRadius: BorderRadius.circular(18),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(Icons.near_me, color: Color(0xFF1C7A47)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'En yakın durak',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: onAdd,
-                    child: const Text('Favorilere ekle'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                stop.stopName,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-              ),
-              const SizedBox(height: 4),
-              Text('Durak ID: ${stop.stopId}'),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FavoriteMiniCarouselCard extends StatelessWidget {
-  const _FavoriteMiniCarouselCard({
-    required this.entry,
-    required this.onTap,
-    required this.liveSummary,
-    required this.approachingBuses,
-  });
-
-  final FavoriteHomeEntry entry;
-  final VoidCallback onTap;
-  final StopLiveSummary? liveSummary;
-  final List<_HomeApproachingBus> approachingBuses;
-
-  @override
-  Widget build(BuildContext context) {
-    final isStop = entry.kind == FavoriteHomeEntryKind.stop;
-    final isLine = entry.kind == FavoriteHomeEntryKind.line;
-    final accent = isStop
-        ? const Color(0xFF1C7A47)
-        : isLine
-            ? const Color(0xFF0A4FB5)
-            : const Color(0xFFE17900);
-    final icon = isStop
-        ? Icons.location_on_rounded
-        : isLine
-            ? Icons.route
-            : Icons.map_rounded;
-    final tag = isStop
-        ? 'Durak'
-        : isLine
-            ? 'Hat'
-            : 'Rota';
-    final primaryText = isLine ? (entry.line?.routeCode ?? entry.title) : entry.title;
-    final subtitleText = isLine ? (entry.line?.routeName ?? entry.subtitle) : entry.subtitle;
-    final firstEta = approachingBuses.isNotEmpty ? approachingBuses.first.etaMinutes : null;
-
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(20),
-      elevation: 0,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: accent.withValues(alpha: 0.15), width: 1.5),
-            gradient: LinearGradient(
-              colors: [accent.withValues(alpha: 0.12), Colors.white],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.85),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(icon, color: accent, size: 18),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: accent.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        tag,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned(
-                      right: -6,
-                      bottom: -10,
-                      child: Icon(
-                        icon,
-                        size: 58,
-                        color: accent.withValues(alpha: 0.08),
-                      ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          primaryText,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.2,
-                                height: 1.15,
-                              ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          subtitleText,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: const Color(0xFF5E6B82),
-                                fontWeight: FontWeight.w600,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.88),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: accent.withValues(alpha: 0.18)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      isStop ? Icons.access_time_filled_rounded : Icons.info_rounded,
-                      size: 15,
-                      color: accent,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        isStop
-                            ? (firstEta == null
-                                ? 'Yaklasan arac bekleniyor'
-                                : 'En yakin arac: $firstEta dk')
-                            : isLine
-                                ? 'Hat detayina git'
-                                : 'Rota detayina git',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: const Color(0xFF33445F),
-                              fontWeight: FontWeight.w700,
-                            ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (isStop && liveSummary != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    'Canli arac: ${liveSummary!.liveBusCount}',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: const Color(0xFF607089),
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _HomeApproachingBus {
-  const _HomeApproachingBus({
-    required this.routeCode,
-    required this.direction,
-    required this.etaMinutes,
-    required this.vehicle,
-  });
-
-  final String routeCode;
-  final String direction;
-  final int etaMinutes;
-  final String vehicle;
-}
-
-class _ReorderFavoritesList extends StatelessWidget {
-  const _ReorderFavoritesList({
-    required this.entries,
-    required this.onReorder,
-  });
-
-  final List<FavoriteHomeEntry> entries;
-  final void Function(int oldIndex, int newIndex) onReorder;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: mathMax(300, entries.length * 92.0),
-      child: ReorderableListView.builder(
-        buildDefaultDragHandles: false,
-        itemCount: entries.length,
-        onReorder: onReorder,
-        itemBuilder: (context, index) {
-          final entry = entries[index];
-          return Container(
-            key: ValueKey(entry.key),
-            margin: const EdgeInsets.only(bottom: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0xFFE2E7F0)),
-            ),
-            child: ListTile(
-              leading: ReorderableDragStartListener(
-                index: index,
-                child: const Icon(Icons.drag_indicator),
-              ),
-              title: Text(entry.title),
-              subtitle: Text(entry.subtitle),
-              trailing: _KindBadge(kind: entry.kind),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _EmptyFavoritesHero extends StatelessWidget {
-  const _EmptyFavoritesHero({
-    required this.onOpenLines,
-    required this.onOpenFavorites,
-  });
-
-  final VoidCallback onOpenLines;
-  final VoidCallback onOpenFavorites;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E7F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Henüz favori yok',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-          ),
-          const SizedBox(height: 8),
-          const Text('Henüz favori eklenmedi.'),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              FilledButton.icon(
-                onPressed: onOpenLines,
-                icon: const Icon(Icons.route),
-                label: const Text('Hatlara git'),
-              ),
-              OutlinedButton.icon(
-                onPressed: onOpenFavorites,
-                icon: const Icon(Icons.star_outline),
-                label: const Text('Favorileri aç'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _KindBadge extends StatelessWidget {
-  const _KindBadge({required this.kind});
-
-  final FavoriteHomeEntryKind kind;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = switch (kind) {
-      FavoriteHomeEntryKind.line => 'Hat',
-      FavoriteHomeEntryKind.stop => 'Durak',
-      FavoriteHomeEntryKind.route => 'Rota',
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF2F6FF),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(text),
-    );
-  }
-}
-
-class _ActionButton extends StatelessWidget {
-  const _ActionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-      elevation: 0,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          constraints: const BoxConstraints(minHeight: 92),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: const Color(0xFFE2E7F0),
-              width: 1.2,
-            ),
-            gradient: LinearGradient(
-              colors: [
-                const Color(0xFFFFFFFF),
-                const Color(0xFFFAFBFC),
-              ],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0A4FB5).withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  icon,
-                  color: const Color(0xFF0A4FB5),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                  color: Color(0xFF3D4857),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CarouselManageCard extends StatelessWidget {
-  const _CarouselManageCard({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(24),
-      elevation: 0,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(24),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: const Color(0xFF0A4FB5).withValues(alpha: 0.15),
-              width: 1.5,
-            ),
-            gradient: LinearGradient(
-              colors: [
-                const Color(0xFF0A4FB5).withValues(alpha: 0.06),
-                Colors.white,
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0A4FB5).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.edit_rounded,
-                  size: 28,
-                  color: Color(0xFF0A4FB5),
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Favorileri\nDüzenle',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  height: 1.3,
-                  color: Color(0xFF0A4FB5),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _InlineErrorCard extends StatelessWidget {
-  const _InlineErrorCard({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF1EE),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Text(message),
-    );
-  }
-}
-
-double mathMax(double a, double b) => a > b ? a : b;

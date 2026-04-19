@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/theme_utils.dart';
 import '../../data/services/adana_api_service.dart';
 import '../../data/models/bus_vehicle.dart';
+import '../shared/app_map_tile_layer.dart';
 import '../shared/geo_math_utils.dart';
 import 'line_detail_models.dart';
 import 'line_detail_overlays.dart';
@@ -492,17 +494,12 @@ class _LineDetailPageState extends State<LineDetailPage> {
               initialZoom: 12.8,
             ),
             children: [
-              TileLayer(
-                urlTemplate:
-                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.adanabus',
-                maxZoom: 19,
-              ),
+              buildAppMapTileLayer(context),
               PolylineLayer(
                 polylines: [
                   Polyline(
                     points: _pathPoints,
-                    color: const Color(0xFF164B9D),
+                    color: AppThemeUtils.getAccentColor(context, 'blue'),
                     strokeWidth: 4,
                   ),
                 ],
@@ -525,8 +522,8 @@ class _LineDetailPageState extends State<LineDetailPage> {
                             child: Icon(
                               Icons.location_on,
                               color: isSelected
-                                  ? const Color(0xFF0B5A25)
-                                  : const Color(0xFFB63519),
+                                  ? AppThemeUtils.getAccentColor(context, 'green')
+                                  : AppThemeUtils.getAccentColor(context, 'orange'),
                               size: isSelected ? 28 : 24,
                             ),
                           ),
@@ -574,8 +571,8 @@ class _LineDetailPageState extends State<LineDetailPage> {
                                   ),
                                   decoration: BoxDecoration(
                                     color: isFocused
-                                        ? const Color(0xFF0B5A25)
-                                        : const Color(0xFF164B9D),
+                                        ? AppThemeUtils.getAccentColor(context, 'green')
+                                        : AppThemeUtils.getAccentColor(context, 'blue'),
                                     borderRadius: BorderRadius.circular(8),
                                   ),
                                   child: Text(
@@ -590,8 +587,8 @@ class _LineDetailPageState extends State<LineDetailPage> {
                                 Icon(
                                   Icons.directions_bus,
                                   color: isFocused
-                                      ? const Color(0xFF0B5A25)
-                                      : const Color(0xFF164B9D),
+                                      ? AppThemeUtils.getAccentColor(context, 'green')
+                                      : AppThemeUtils.getAccentColor(context, 'blue'),
                                   size: isFocused ? 26 : 22,
                                 ),
                               ],
@@ -619,7 +616,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF0B5A25),
+                                color: AppThemeUtils.getAccentColor(context, 'green'),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text(
@@ -632,9 +629,9 @@ class _LineDetailPageState extends State<LineDetailPage> {
                               ),
                             ),
                             const SizedBox(height: 2),
-                            const Icon(
+                            Icon(
                               Icons.play_circle_fill,
-                              color: Color(0xFF0B5A25),
+                              color: AppThemeUtils.getAccentColor(context, 'green'),
                               size: 24,
                             ),
                           ],
@@ -697,7 +694,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
           Positioned(
             right: 14,
             bottom: 160,
-            child: _LineDetailFloatingActions(
+            child: LineDetailFloatingActions(
               onToggleDirection: _isLoading ? null : _toggleDirection,
               onOpenTimetable: _openTimetablePage,
               directionTooltip:
@@ -707,7 +704,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
           if (_isLoading)
             Positioned.fill(
               child: Container(
-                color: Colors.white.withValues(alpha: 0.55),
+                color: AppThemeUtils.getOverlayColor(context, 0.55),
                 alignment: Alignment.center,
                 child: const CircularProgressIndicator(),
               ),
@@ -719,7 +716,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
               right: 12,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF1EE),
+                  color: AppThemeUtils.getDisabledColor(context),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Padding(
@@ -1362,43 +1359,4 @@ class _LineDetailPageState extends State<LineDetailPage> {
     _lastMapZoom = 13.2;
   }
 
-}
-
-class _LineDetailFloatingActions extends StatelessWidget {
-  const _LineDetailFloatingActions({
-    required this.onToggleDirection,
-    required this.onOpenTimetable,
-    required this.directionTooltip,
-  });
-
-  final VoidCallback? onToggleDirection;
-  final VoidCallback onOpenTimetable;
-  final String directionTooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      elevation: 4,
-      borderRadius: BorderRadius.circular(14),
-      color: Colors.white.withValues(alpha: 0.95),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              onPressed: onToggleDirection,
-              icon: const Icon(Icons.swap_horiz),
-              tooltip: directionTooltip,
-            ),
-            IconButton(
-              onPressed: onOpenTimetable,
-              icon: const Icon(Icons.schedule),
-              tooltip: 'Cikis saatleri',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

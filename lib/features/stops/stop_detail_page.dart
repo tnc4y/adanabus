@@ -4,12 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/theme_utils.dart';
 import '../../data/models/bus_vehicle.dart';
 import '../../data/models/transit_stop.dart';
 import '../../data/services/adana_api_service.dart';
 import '../shared/geo_math_utils.dart';
 import '../shared/kentkart_path_utils.dart';
+import '../shared/app_map_tile_layer.dart';
 import '../favorites/favorite_stop_item.dart';
+import 'stop_detail_widgets.dart';
 
 class StopDetailPage extends StatefulWidget {
   const StopDetailPage({
@@ -36,7 +39,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
   DateTime? _lastUpdatedAt;
   TransitStop? _selectedStop;
   List<TransitStop> _clusterStops = <TransitStop>[];
-  List<_RouteTrackInfo> _tracks = <_RouteTrackInfo>[];
+  List<StopRouteTrackInfo> _tracks = <StopRouteTrackInfo>[];
   String? _selectedTrackKey;
   int _focusedTrackPage = 0;
   Timer? _refreshTimer;
@@ -141,7 +144,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
       final clusterStops = _buildNearbyStopCluster(allStops, selected);
 
       final routeCodes = _collectClusterRouteCodes(clusterStops);
-      final tracks = <_RouteTrackInfo>[];
+      final tracks = <StopRouteTrackInfo>[];
       var paletteIndex = 0;
 
       for (final routeCode in routeCodes) {
@@ -235,7 +238,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
     }
   }
 
-  _RouteTrackInfo? _parseTrack({
+  StopRouteTrackInfo? _parseTrack({
     required Map<String, dynamic> payload,
     required String routeCode,
     required String direction,
@@ -316,7 +319,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
         stopLon: matchedStop.stop.longitude,
       );
 
-      return _RouteTrackInfo(
+      return StopRouteTrackInfo(
         routeCode: routeCode,
         direction: direction,
         color: color,
@@ -585,7 +588,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
     final clusterStops = _clusterStops.isEmpty && stop != null
         ? <TransitStop>[stop]
         : _clusterStops;
-    final sortedTracks = List<_RouteTrackInfo>.from(_tracks)
+    final sortedTracks = List<StopRouteTrackInfo>.from(_tracks)
       ..sort((a, b) {
         final distanceCompare = a.approachMeters.compareTo(b.approachMeters);
         if (distanceCompare != 0) {
@@ -600,8 +603,8 @@ class _StopDetailPageState extends State<StopDetailPage> {
             orElse: () => sortedTracks.first,
           );
     final visibleTracks = selectedTrack == null
-        ? const <_RouteTrackInfo>[]
-        : <_RouteTrackInfo>[selectedTrack];
+        ? const <StopRouteTrackInfo>[]
+        : <StopRouteTrackInfo>[selectedTrack];
     final visibleRouteCodes = visibleTracks.map((track) => track.routeCode).toSet();
     final remainingRoutes = clusterStops
       .expand((item) => item.routes)
@@ -633,10 +636,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
                 initialZoom: 14,
               ),
               children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.adanabus',
-                ),
+                buildAppMapTileLayer(context),
                 PolylineLayer(
                   polylines: visibleTracks
                       .expand((t) {
@@ -745,7 +745,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
               right: 12,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF1EE),
+                  color: AppThemeUtils.getDisabledColor(context),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Padding(
@@ -759,7 +759,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
               top: _error != null ? 72 : 12,
               left: 12,
               right: 12,
-              child: _NearbyStopsFloatingCard(
+              child: StopNearbyStopsCard(
                 anchorName: stop?.stopName ?? widget.favoriteStop.stopName,
                 clusterStops: clusterStops,
               ),
@@ -795,7 +795,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
                       final track = sortedTracks[index];
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: _TrackFloatingCard(
+                        child: StopTrackCard(
                           track: track,
                           stopName: stop?.stopName ?? widget.favoriteStop.stopName,
                           updatedAt: _lastUpdatedAt,
@@ -806,7 +806,7 @@ class _StopDetailPageState extends State<StopDetailPage> {
 
                     return Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: _MissingRoutesPageCard(routes: remainingRoutes),
+                      child: StopMissingRoutesCard(routes: remainingRoutes),
                     );
                   },
                 ),
@@ -816,249 +816,4 @@ class _StopDetailPageState extends State<StopDetailPage> {
       ),
     );
   }
-}
-
-class _NearbyStopsFloatingCard extends StatelessWidget {
-  const _NearbyStopsFloatingCard({
-    required this.anchorName,
-    required this.clusterStops,
-  });
-
-  final String anchorName;
-  final List<TransitStop> clusterStops;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      elevation: 3,
-      borderRadius: BorderRadius.circular(14),
-      color: Colors.white.withValues(alpha: 0.96),
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '${clusterStops.length} durak birlestirildi',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              anchorName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                    color: const Color(0xFF3D4857),
-                    fontWeight: FontWeight.w600,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: clusterStops
-                    .map(
-                      (stop) => Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF5F7FA),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: const Color(0xFFE2E7F0)),
-                          ),
-                          child: Text(
-                            stop.stopName,
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                      ),
-                    )
-                    .toList(growable: false),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _TrackFloatingCard extends StatelessWidget {
-  const _TrackFloatingCard({
-    required this.track,
-    required this.stopName,
-    required this.updatedAt,
-    required this.isSelected,
-  });
-
-  final _RouteTrackInfo track;
-  final String stopName;
-  final DateTime? updatedAt;
-  final bool isSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    final updated = updatedAt == null
-        ? '-'
-        : '${updatedAt!.hour.toString().padLeft(2, '0')}:${updatedAt!.minute.toString().padLeft(2, '0')}';
-    final etaText = track.nearestEtaMinutes == null
-        ? 'ETA yok'
-        : '${track.nearestEtaMinutes} dk${track.nextEtaMinutes == null ? '' : ' • ${track.nextEtaMinutes} dk'}';
-
-    return Material(
-      elevation: 3,
-      borderRadius: BorderRadius.circular(14),
-      color: Colors.white.withValues(alpha: 0.96),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(color: track.color, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Hat ${track.routeCode} • ${track.direction == '1' ? 'Donus' : 'Gidis'}',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (isSelected)
-                  const Icon(Icons.radio_button_checked, size: 16, color: Color(0xFF164B9D)),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '$stopName • ${(track.approachMeters / 1000).toStringAsFixed(1)} km',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-            Text(
-              'Yaklasan: $etaText • Canli: ${track.liveBusCount}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF175E2F),
-                    fontWeight: FontWeight.w700,
-                  ),
-            ),
-            const Spacer(),
-            Text(
-              'Son guncelleme: $updated',
-              style: Theme.of(context).textTheme.labelSmall,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _MissingRoutesPageCard extends StatelessWidget {
-  const _MissingRoutesPageCard({required this.routes});
-
-  final List<String> routes;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      elevation: 3,
-      borderRadius: BorderRadius.circular(14),
-      color: Colors.white.withValues(alpha: 0.96),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Buradan gecer (yaklasmayanlar)',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: SingleChildScrollView(
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: routes
-                      .take(24)
-                      .map(
-                        (route) => Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF5F7FA),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: const Color(0xFFE2E7F0)),
-                          ),
-                          child: Text(
-                            route,
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                          ),
-                        ),
-                      )
-                      .toList(growable: false),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _RouteTrackInfo {
-  const _RouteTrackInfo({
-    required this.routeCode,
-    required this.direction,
-    required this.color,
-    required this.approachPoints,
-    required this.afterStopPoints,
-    required this.remainingPoints,
-    required this.approachMeters,
-    required this.fromStopName,
-    required this.toStopName,
-    required this.nearestEtaMinutes,
-    required this.nextEtaMinutes,
-    required this.liveBusCount,
-    required this.buses,
-    required this.primaryBus,
-  });
-
-  final String routeCode;
-  final String direction;
-  final Color color;
-  final List<LatLng> approachPoints;
-  final List<LatLng> afterStopPoints;
-  final List<LatLng> remainingPoints;
-  final double approachMeters;
-  final String fromStopName;
-  final String toStopName;
-  final int? nearestEtaMinutes;
-  final int? nextEtaMinutes;
-  final int liveBusCount;
-  final List<BusVehicle> buses;
-  final BusVehicle? primaryBus;
-
-  String get key => '$routeCode|$direction|$toStopName';
 }

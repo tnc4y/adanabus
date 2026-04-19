@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/theme_utils.dart';
 import '../../data/services/adana_api_service.dart';
+import '../shared/app_map_tile_layer.dart';
 import '../shared/geo_math_utils.dart';
 import 'favorite_route_item.dart';
 import 'favorite_route_detail_service.dart';
@@ -154,10 +156,7 @@ class _FavoriteRouteDetailPageState extends State<FavoriteRouteDetailPage> {
                     initialZoom: 13.8,
                   ),
                   children: [
-                    TileLayer(
-                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.example.adanabus',
-                    ),
+                    buildAppMapTileLayer(context),
                     if (selected != null)
                       PolylineLayer(
                         polylines: [
@@ -218,7 +217,7 @@ class _FavoriteRouteDetailPageState extends State<FavoriteRouteDetailPage> {
                 if (_isLoading)
                   Positioned.fill(
                     child: Container(
-                      color: Colors.white.withValues(alpha: 0.55),
+                      color: AppThemeUtils.getOverlayColor(context, 0.55),
                       alignment: Alignment.center,
                       child: const CircularProgressIndicator(),
                     ),
@@ -230,7 +229,7 @@ class _FavoriteRouteDetailPageState extends State<FavoriteRouteDetailPage> {
                     right: 12,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFF1EE),
+                        color: AppThemeUtils.getDisabledColor(context),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Padding(

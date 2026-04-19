@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/theme_utils.dart';
 import '../../data/models/transit_stop.dart';
 import '../../data/services/adana_api_service.dart';
+import '../shared/app_map_tile_layer.dart';
 
 enum StopPickerViewMode { list, map }
 
@@ -247,7 +249,7 @@ class _StopPickerPageState extends State<StopPickerPage> {
                 padding: const EdgeInsets.all(10),
                 margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFF1EE),
+                  color: AppThemeUtils.getDisabledColor(context),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(_error!),
@@ -320,13 +322,7 @@ class _StopPickerPageState extends State<StopPickerPage> {
                                       },
                                     ),
                                     children: [
-                                      TileLayer(
-                                        urlTemplate:
-                                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                                        userAgentPackageName:
-                                            'com.example.adanabus',
-                                        maxZoom: 19,
-                                      ),
+                                      buildAppMapTileLayer(context),
                                       MarkerLayer(
                                         markers: visibleMarkers.map((stop) {
                                           final isSelected = widget

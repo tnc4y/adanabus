@@ -6,7 +6,14 @@ import '../home/home_page.dart';
 import '../lines/lines_page.dart';
 
 class AppShellPage extends StatefulWidget {
-  const AppShellPage({super.key});
+  const AppShellPage({
+    super.key,
+    required this.isDarkMode,
+    required this.onToggleTheme,
+  });
+
+  final bool isDarkMode;
+  final Future<void> Function() onToggleTheme;
 
   @override
   State<AppShellPage> createState() => _AppShellPageState();
@@ -88,6 +95,12 @@ class _AppShellPageState extends State<AppShellPage> {
             label: 'Favoriler',
           ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.small(
+        heroTag: 'theme_toggle_fab',
+        onPressed: () => widget.onToggleTheme(),
+        tooltip: widget.isDarkMode ? 'Aydinlik moda gec' : 'Karanlik moda gec',
+        child: Icon(widget.isDarkMode ? Icons.light_mode : Icons.dark_mode),
       ),
     );
   }

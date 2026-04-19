@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme_utils.dart';
 import '../../data/models/bus_vehicle.dart';
 import 'line_detail_models.dart';
 
@@ -23,7 +24,7 @@ class LineDetailVehicleFloatingCard extends StatelessWidget {
 
     return Material(
       elevation: 4,
-      color: Colors.white.withValues(alpha: 0.97),
+      color: AppThemeUtils.getCardColor(context).withValues(alpha: 0.97),
       borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -32,7 +33,7 @@ class LineDetailVehicleFloatingCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.directions_bus, color: Color(0xFF0B5A25)),
+                Icon(Icons.directions_bus, color: AppThemeUtils.getAccentColor(context, 'green')),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -44,9 +45,9 @@ class LineDetailVehicleFloatingCard extends StatelessWidget {
                 ),
                 Text(
                   '%$percent',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w800,
-                    color: Color(0xFF175E2F),
+                    color: AppThemeUtils.getAccentColor(context, 'green'),
                   ),
                 ),
               ],
@@ -70,18 +71,18 @@ class LineDetailVehicleFloatingCard extends StatelessWidget {
                 child: LinearProgressIndicator(
                   value: progressInfo.progress,
                   minHeight: 8,
-                  backgroundColor: const Color(0xFFE6EBF4),
-                  valueColor: const AlwaysStoppedAnimation<Color>(
-                    Color(0xFF0B5A25),
+                  backgroundColor: AppThemeUtils.getDisabledColor(context),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    AppThemeUtils.getAccentColor(context, 'green'),
                   ),
                 ),
               ),
               const SizedBox(height: 6),
               Text(
                 'Kalan durak: ${progressInfo.remainingStops}',
-                style: const TextStyle(
+                style: TextStyle(
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF1C4B85),
+                  color: AppThemeUtils.getAccentColor(context, 'blue'),
                 ),
               ),
             ],
@@ -99,7 +100,7 @@ class LineDetailVehicleEmptyFloatingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       elevation: 2,
-      color: Colors.white.withValues(alpha: 0.96),
+      color: AppThemeUtils.getCardColor(context).withValues(alpha: 0.96),
       borderRadius: BorderRadius.circular(14),
       child: const Center(
         child: Text(
@@ -141,7 +142,7 @@ class LineDetailSelectedStopInfoCard extends StatelessWidget {
     return Material(
       elevation: 3,
       borderRadius: BorderRadius.circular(12),
-      color: Colors.white.withValues(alpha: 0.96),
+      color: AppThemeUtils.getCardColor(context).withValues(alpha: 0.96),
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: Column(
@@ -187,10 +188,50 @@ class LineDetailSelectedStopInfoCard extends StatelessWidget {
               style: TextStyle(
                 fontSize: 12,
                 color: estimate == null
-                    ? const Color(0xFF6A6A6A)
-                    : const Color(0xFF175E2F),
+                    ? AppThemeUtils.getSecondaryTextColor(context)
+                    : AppThemeUtils.getAccentColor(context, 'green'),
                 fontWeight: FontWeight.w600,
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class LineDetailFloatingActions extends StatelessWidget {
+  const LineDetailFloatingActions({
+    super.key,
+    required this.onToggleDirection,
+    required this.onOpenTimetable,
+    required this.directionTooltip,
+  });
+
+  final VoidCallback? onToggleDirection;
+  final VoidCallback onOpenTimetable;
+  final String directionTooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 4,
+      borderRadius: BorderRadius.circular(14),
+      color: Colors.white.withValues(alpha: 0.95),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              onPressed: onToggleDirection,
+              icon: const Icon(Icons.swap_horiz),
+              tooltip: directionTooltip,
+            ),
+            IconButton(
+              onPressed: onOpenTimetable,
+              icon: const Icon(Icons.schedule),
+              tooltip: 'Cikis saatleri',
             ),
           ],
         ),
