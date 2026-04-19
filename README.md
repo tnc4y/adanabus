@@ -4,6 +4,24 @@ AdanaBus, Adana toplu taşıma kullanıcıları için canlı otobüs takibi, dur
 
 Bu README, uygulamanın ne yaptığını, hangi ekranlardan oluştuğunu, veriyi nasıl işlediğini ve projeyi nasıl çalıştıracağınızı tek yerde toplar.
 
+## Ekran Görüntüleri
+
+### Ana kullanım akışı
+
+| Ana Sayfa | Hatlar | Hat Detay |
+| --- | --- | --- |
+| ![Ana sayfa](screenshots/anasayfa.jpg) | ![Hatlar](screenshots/hatlar.jpg) | ![Hat detay](screenshots/hat_detay.jpg) |
+
+| Hat Saatleri | Durak Liste | Durak Detay |
+| --- | --- | --- |
+| ![Hat saatleri](screenshots/hat_saat.jpg) | ![Durak listesi](screenshots/durak_list.jpg) | ![Durak detay](screenshots/durak_detay.jpg) |
+
+### Harita ve seçim akışı
+
+| Harita Seçim | Durak Harita |
+| --- | --- |
+| ![Harita seçim](screenshots/harita_secim.jpg) | ![Durak harita](screenshots/durak_map.jpg) |
+
 ## İçindekiler
 
 - [Öne Çıkanlar](#öne-çıkanlar)
@@ -54,24 +72,6 @@ Bu README, uygulamanın ne yaptığını, hangi ekranlardan oluştuğunu, veriyi
 
 - Favori hat, favori durak ve favori rota yönetimi sağlar.
 - Yerel depolama ile uygulama yeniden açıldığında veriyi korur.
-
-## Ekran Görüntüleri
-
-### Ana kullanım akışı
-
-| Ana Sayfa | Hatlar | Hat Detay |
-| --- | --- | --- |
-| ![Ana sayfa](screenshots/anasayfa.jpg) | ![Hatlar](screenshots/hatlar.jpg) | ![Hat detay](screenshots/hat_detay.jpg) |
-
-| Hat Saatleri | Durak Liste | Durak Detay |
-| --- | --- | --- |
-| ![Hat saatleri](screenshots/hat_saat.jpg) | ![Durak listesi](screenshots/durak_list.jpg) | ![Durak detay](screenshots/durak_detay.jpg) |
-
-### Harita ve seçim akışı
-
-| Harita Seçim | Durak Harita |
-| --- | --- |
-| ![Harita seçim](screenshots/harita_secim.jpg) | ![Durak harita](screenshots/durak_map.jpg) |
 
 ## Teknik Yapı
 
