@@ -7,6 +7,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../data/services/adana_api_service.dart';
 import '../../data/models/bus_vehicle.dart';
+import 'line_timetable_page.dart';
 
 class LineDetailPage extends StatefulWidget {
   const LineDetailPage({
@@ -27,20 +28,23 @@ class LineDetailPage extends StatefulWidget {
 class _LineDetailPageState extends State<LineDetailPage> {
   final AdanaApiService _apiService = AdanaApiService();
   final MapController _mapController = MapController();
+  final PageController _vehiclePageController = PageController(viewportFraction: 0.9);
 
   bool _isLoading = false;
   String? _error;
   String _currentDirection = '0';
   List<LineStop> _stops = <LineStop>[];
   List<LatLng> _pathPoints = <LatLng>[];
-  List<LineScheduleItem> _schedules = <LineScheduleItem>[];
   List<BusVehicle> _liveRouteBuses = <BusVehicle>[];
   Map<String, StopArrivalEstimate> _arrivalByStopKey =
       <String, StopArrivalEstimate>{};
   LineStop? _selectedStop;
-  int _routeBusRecordCount = 0;
+  int _focusedBusIndex = 0;
   Timer? _liveBusTimer;
+  Timer? _mapFocusTimer;
   DateTime? _lastBusRefreshAt;
+  LatLng? _lastMapCenter;
+  double _lastMapZoom = 13.2;
   static const double _etaMetersPerMinute = 320;
 
   @override
@@ -54,6 +58,8 @@ class _LineDetailPageState extends State<LineDetailPage> {
   @override
   void dispose() {
     _liveBusTimer?.cancel();
+    _mapFocusTimer?.cancel();
+    _vehiclePageController.dispose();
     super.dispose();
   }
 
@@ -86,18 +92,7 @@ class _LineDetailPageState extends State<LineDetailPage> {
         final liveBusesFromPath = _extractLiveBusesFromPathPayload(pathPayload);
 
       final routeBuses = await _apiService.fetchBuses();
-      final busIds = routeBuses
-          .where(
-            (bus) =>
-                bus.displayRouteCode == widget.routeCode &&
-                bus.direction == _currentDirection &&
-                bus.id.isNotEmpty,
-          )
-          .map((bus) => bus.id)
-          .toSet()
-          .take(6)
-          .toList();
-        final liveRouteBuses = routeBuses
+      final liveRouteBuses = routeBuses
           .where(
               (bus) =>
                   bus.displayRouteCode == widget.routeCode &&
@@ -105,31 +100,26 @@ class _LineDetailPageState extends State<LineDetailPage> {
                   bus.hasLocation,
           )
           .toList(growable: false);
-        final routeBusRecords = routeBuses
-            .where(
-              (bus) =>
-                  bus.displayRouteCode == widget.routeCode &&
-                  bus.direction == _currentDirection,
-            )
-            .length;
 
       final stops = _extractStops(pathPayload);
       final points = _extractPathPoints(pathPayload, stops);
-      final stopNameById = _extractStopNameById(pathPayload);
-      final schedules = await _loadRealSchedules(busIds, stopNameById);
       final resolvedLiveBuses = liveBusesFromPath.isNotEmpty
           ? liveBusesFromPath
           : liveRouteBuses;
       final arrivals = _buildStopArrivalEstimates(stops, resolvedLiveBuses);
+      final nextFocusedBusIndex = _syncFocusedBusIndex(
+        previousBuses: _liveRouteBuses,
+        nextBuses: resolvedLiveBuses,
+        previousIndex: _focusedBusIndex,
+      );
 
       setState(() {
         _stops = stops;
         _pathPoints = points;
-        _schedules = schedules;
         _liveRouteBuses = resolvedLiveBuses;
         _arrivalByStopKey = arrivals;
         _selectedStop = _resolveSelectedStop(stops, _selectedStop);
-        _routeBusRecordCount = routeBusRecords;
+        _focusedBusIndex = nextFocusedBusIndex;
         _lastBusRefreshAt = DateTime.now();
       });
 
@@ -138,11 +128,12 @@ class _LineDetailPageState extends State<LineDetailPage> {
           return;
         }
         _fitMapToRoute();
+        _alignVehiclePageToFocused();
+        _focusSelectedVehicle(animate: false);
       });
     } catch (error) {
       setState(() {
         _error = error.toString();
-        _schedules = <LineScheduleItem>[];
       });
     } finally {
       if (mounted) {
@@ -185,17 +176,15 @@ class _LineDetailPageState extends State<LineDetailPage> {
                 bus.hasLocation,
           )
           .toList(growable: false);
-        final routeBusRecords = buses
-          .where(
-          (bus) =>
-            bus.displayRouteCode == widget.routeCode &&
-            bus.direction == _currentDirection,
-          )
-          .length;
       final resolved = liveBusesFromPath.isNotEmpty
           ? liveBusesFromPath
           : filteredFromBuses;
-        final arrivals = _buildStopArrivalEstimates(_stops, resolved);
+      final arrivals = _buildStopArrivalEstimates(_stops, resolved);
+      final nextFocusedBusIndex = _syncFocusedBusIndex(
+        previousBuses: _liveRouteBuses,
+        nextBuses: resolved,
+        previousIndex: _focusedBusIndex,
+      );
 
       if (!mounted) {
         return;
@@ -204,63 +193,20 @@ class _LineDetailPageState extends State<LineDetailPage> {
       setState(() {
         _liveRouteBuses = resolved;
         _arrivalByStopKey = arrivals;
-        _routeBusRecordCount = routeBusRecords;
+        _focusedBusIndex = nextFocusedBusIndex;
         _lastBusRefreshAt = DateTime.now();
+      });
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        _alignVehiclePageToFocused();
+        _focusSelectedVehicle();
       });
     } catch (_) {
       // Live tracking should not break the route page if one refresh fails.
     }
-  }
-
-  Future<List<LineScheduleItem>> _loadRealSchedules(
-    List<String> busIds,
-    Map<String, String> stopNameById,
-  ) async {
-    final result = <LineScheduleItem>[];
-    final dedupe = <String>{};
-
-    for (final busId in busIds) {
-      try {
-        final response = await _apiService.fetchStopBusTimeByBusId(busId);
-        final records = _extractAnyRecords(response);
-        for (final record in records) {
-          final time = _extractTime(record);
-          if (time == null) {
-            continue;
-          }
-
-          final stopName = _readString(record, const [
-            'StopName',
-            'stopName',
-            'stationName',
-            'Name',
-            'name',
-          ]);
-          final stopId = _readString(record, const ['StopId', 'stopId']);
-          final resolvedStopName = stopName.isNotEmpty
-              ? stopName
-              : (stopNameById[stopId] ?? 'Durak bilgisi yok');
-
-          final key = '$busId|$time|$resolvedStopName';
-          if (!dedupe.add(key)) {
-            continue;
-          }
-
-          result.add(
-            LineScheduleItem(
-              busId: busId,
-              stopName: resolvedStopName,
-              timeText: time,
-            ),
-          );
-        }
-      } catch (_) {
-        continue;
-      }
-    }
-
-    result.sort((a, b) => a.timeText.compareTo(b.timeText));
-    return result;
   }
 
   List<LineStop> _extractStops(Map<String, dynamic> payload) {
@@ -404,316 +350,332 @@ class _LineDetailPageState extends State<LineDetailPage> {
     return const <LatLng>[];
   }
 
+  int _syncFocusedBusIndex({
+    required List<BusVehicle> previousBuses,
+    required List<BusVehicle> nextBuses,
+    required int previousIndex,
+  }) {
+    if (nextBuses.isEmpty) {
+      return 0;
+    }
+
+    if (previousBuses.isNotEmpty && previousIndex >= 0 && previousIndex < previousBuses.length) {
+      final previousBus = previousBuses[previousIndex];
+      final matchById = nextBuses.indexWhere((bus) =>
+          bus.id.isNotEmpty && previousBus.id.isNotEmpty && bus.id == previousBus.id);
+      if (matchById >= 0) {
+        return matchById;
+      }
+    }
+
+    return math.min(previousIndex, nextBuses.length - 1);
+  }
+
+  void _alignVehiclePageToFocused() {
+    if (!_vehiclePageController.hasClients || _liveRouteBuses.isEmpty) {
+      return;
+    }
+    final safeIndex = math.max(0, math.min(_focusedBusIndex, _liveRouteBuses.length - 1));
+    _vehiclePageController.jumpToPage(safeIndex);
+  }
+
+  void _focusSelectedVehicle({bool animate = true}) {
+    if (_liveRouteBuses.isEmpty) {
+      return;
+    }
+    final safeIndex = math.max(0, math.min(_focusedBusIndex, _liveRouteBuses.length - 1));
+    final bus = _liveRouteBuses[safeIndex];
+    if (!bus.hasLocation) {
+      return;
+    }
+    final target = LatLng(bus.latitude!, bus.longitude!);
+    _animateMapTo(target, targetZoom: 15.6, animate: animate);
+  }
+
+  void _animateMapTo(LatLng target, {double targetZoom = 15.2, bool animate = true}) {
+    _mapFocusTimer?.cancel();
+
+    final fromCenter = _lastMapCenter ?? _resolveRouteCenter();
+    final fromZoom = _lastMapZoom;
+
+    if (!animate) {
+      _mapController.move(target, targetZoom);
+      _lastMapCenter = target;
+      _lastMapZoom = targetZoom;
+      return;
+    }
+
+    const totalSteps = 10;
+    var currentStep = 0;
+
+    _mapFocusTimer = Timer.periodic(const Duration(milliseconds: 28), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      currentStep++;
+      final t = currentStep / totalSteps;
+      final eased = Curves.easeOutCubic.transform(t.clamp(0.0, 1.0));
+      final lat = fromCenter.latitude + ((target.latitude - fromCenter.latitude) * eased);
+      final lng = fromCenter.longitude + ((target.longitude - fromCenter.longitude) * eased);
+      final zoom = fromZoom + ((targetZoom - fromZoom) * eased);
+      _mapController.move(LatLng(lat, lng), zoom);
+
+      if (currentStep >= totalSteps) {
+        timer.cancel();
+        _lastMapCenter = target;
+        _lastMapZoom = targetZoom;
+      }
+    });
+  }
+
+  void _toggleDirection() {
+    if (_isLoading) {
+      return;
+    }
+    setState(() {
+      _currentDirection = _currentDirection == '1' ? '0' : '1';
+      _selectedStop = null;
+    });
+    _loadDetail();
+  }
+
+  void _openTimetablePage() {
+    final fromStop = _stops.isNotEmpty ? _stops.first.name : 'Baslangic duragi';
+    final toStop = _stops.isNotEmpty ? _stops.last.name : 'Bitis duragi';
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => LineTimetablePage(
+          routeCode: widget.routeCode,
+          routeName: widget.routeName,
+          direction: _currentDirection,
+          fromStopName: fromStop,
+          toStopName: toStop,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final center = _resolveRouteCenter();
 
-    return DefaultTabController(
-      length: 3,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text('Hat ${widget.routeCode}'),
-          bottom: PreferredSize(
-            preferredSize: const Size.fromHeight(68),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Column(
-                children: [
-                  Text(
-                    widget.routeName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('Gidis'),
-                        selected: _currentDirection == '0',
-                        onSelected: _isLoading
-                            ? null
-                            : (_) {
-                                if (_currentDirection != '0') {
-                                  setState(() {
-                                    _currentDirection = '0';
-                                  });
-                                  _loadDetail();
-                                }
-                              },
-                      ),
-                      const SizedBox(width: 8),
-                      ChoiceChip(
-                        label: const Text('Donus'),
-                        selected: _currentDirection == '1',
-                        onSelected: _isLoading
-                            ? null
-                            : (_) {
-                                if (_currentDirection != '1') {
-                                  setState(() {
-                                    _currentDirection = '1';
-                                  });
-                                  _loadDetail();
-                                }
-                              },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          '${widget.routeName} (${widget.routeCode})',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          IconButton(
+            onPressed: _isLoading ? null : _toggleDirection,
+            icon: const Icon(Icons.swap_horiz),
+            tooltip: _currentDirection == '1' ? 'Gidise gec' : 'Donuse gec',
           ),
-        ),
-        body: Column(
-          children: [
-            Expanded(
-              child: Stack(
-                children: [
-                  FlutterMap(
-                    mapController: _mapController,
-                    options: MapOptions(
-                      initialCenter: center,
-                      initialZoom: 12.8,
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.adanabus',
-                        maxZoom: 19,
-                      ),
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: _pathPoints,
-                            color: const Color(0xFF164B9D),
-                            strokeWidth: 4,
+          IconButton(
+            onPressed: _openTimetablePage,
+            icon: const Icon(Icons.schedule),
+            tooltip: 'Cikis saatleri',
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: center,
+              initialZoom: 12.8,
+            ),
+            children: [
+              TileLayer(
+                urlTemplate:
+                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.adanabus',
+                maxZoom: 19,
+              ),
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: _pathPoints,
+                    color: const Color(0xFF164B9D),
+                    strokeWidth: 4,
+                  ),
+                ],
+              ),
+              MarkerLayer(
+                markers: _stops
+                    .map(
+                      (stop) {
+                        final isSelected = _selectedStop?.key == stop.key;
+                        return Marker(
+                          point: LatLng(stop.latitude, stop.longitude),
+                          width: 34,
+                          height: 34,
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedStop = stop;
+                              });
+                            },
+                            child: Icon(
+                              Icons.location_on,
+                              color: isSelected
+                                  ? const Color(0xFF0B5A25)
+                                  : const Color(0xFFB63519),
+                              size: isSelected ? 28 : 24,
+                            ),
                           ),
-                        ],
-                      ),
-                      MarkerLayer(
-                        markers: _stops
-                            .map(
-                              (stop) {
-                                final isSelected = _selectedStop?.key == stop.key;
-                                return Marker(
-                                  point: LatLng(stop.latitude, stop.longitude),
-                                  width: 34,
-                                  height: 34,
-                                  child: GestureDetector(
-                                    onTap: () {
-                                      setState(() {
-                                        _selectedStop = stop;
-                                      });
-                                    },
-                                    child: Icon(
-                                      Icons.location_on,
-                                      color: isSelected
-                                          ? const Color(0xFF0B5A25)
-                                          : const Color(0xFFB63519),
-                                      size: isSelected ? 28 : 24,
-                                    ),
-                                  ),
+                        );
+                      },
+                    )
+                    .toList(),
+              ),
+              MarkerLayer(
+                markers: _liveRouteBuses
+                    .where((bus) => bus.hasLocation)
+                    .map(
+                      (bus) {
+                        final index = _liveRouteBuses.indexOf(bus);
+                        final isFocused = index == _focusedBusIndex;
+                        return Marker(
+                          point: LatLng(bus.latitude!, bus.longitude!),
+                          width: isFocused ? 50 : 44,
+                          height: isFocused ? 50 : 44,
+                          child: GestureDetector(
+                            onTap: () {
+                              if (!mounted) {
+                                return;
+                              }
+                              setState(() {
+                                _focusedBusIndex = index;
+                                _selectedStop = null;
+                              });
+                              if (_vehiclePageController.hasClients) {
+                                _vehiclePageController.animateToPage(
+                                  index,
+                                  duration: const Duration(milliseconds: 280),
+                                  curve: Curves.easeOutCubic,
                                 );
-                              },
-                            )
-                            .toList(),
-                      ),
-                      MarkerLayer(
-                        markers: _liveRouteBuses
-                            .where((bus) => bus.hasLocation)
-                            .map(
-                              (bus) => Marker(
-                                point: LatLng(bus.latitude!, bus.longitude!),
-                                width: 46,
-                                height: 46,
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF164B9D),
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Text(
-                                        bus.id.isEmpty ? 'Bus' : bus.id,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 9,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
+                              }
+                              _focusSelectedVehicle();
+                            },
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: isFocused
+                                        ? const Color(0xFF0B5A25)
+                                        : const Color(0xFF164B9D),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    bus.id.isEmpty ? 'Bus' : bus.id,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w700,
                                     ),
-                                    const Icon(
-                                      Icons.directions_bus,
-                                      color: Color(0xFF0B5A25),
-                                      size: 24,
-                                    ),
-                                  ],
+                                  ),
                                 ),
-                              ),
-                            )
-                            .toList(growable: false),
-                      ),
-                    ],
-                  ),
-                  Positioned(
-                    top: 12,
-                    right: 12,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.94),
-                        borderRadius: BorderRadius.circular(10),
-                        boxShadow: const [
-                          BoxShadow(
-                            blurRadius: 8,
-                            offset: Offset(0, 2),
-                            color: Color(0x22000000),
+                                Icon(
+                                  Icons.directions_bus,
+                                  color: isFocused
+                                      ? const Color(0xFF0B5A25)
+                                      : const Color(0xFF164B9D),
+                                  size: isFocused ? 26 : 22,
+                                ),
+                              ],
+                            ),
                           ),
-                        ],
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 8,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Canli: ${_liveRouteBuses.length} otobus',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                              ),
+                        );
+                      },
+                    )
+                    .toList(growable: false),
+              ),
+            ],
+          ),
+          if (_selectedStop != null)
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 18,
+              child: _SelectedStopInfoCard(
+                stop: _selectedStop!,
+                estimate: _arrivalByStopKey[_selectedStop!.key],
+                currentRouteCode: widget.routeCode,
+                currentDirection: _currentDirection,
+                lastRefreshAt: _lastBusRefreshAt,
+                onClose: () {
+                  setState(() {
+                    _selectedStop = null;
+                  });
+                },
+              ),
+            )
+          else
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 18,
+              child: SizedBox(
+                height: 128,
+                child: _liveRouteBuses.isEmpty
+                    ? const _VehicleEmptyFloatingCard()
+                    : PageView.builder(
+                        controller: _vehiclePageController,
+                        itemCount: _liveRouteBuses.length,
+                        onPageChanged: (index) {
+                          setState(() {
+                            _focusedBusIndex = index;
+                          });
+                          _focusSelectedVehicle();
+                        },
+                        itemBuilder: (context, index) {
+                          final bus = _liveRouteBuses[index];
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: _VehicleFloatingCard(
+                              bus: bus,
+                              routeCode: widget.routeCode,
+                              direction: _currentDirection,
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _lastBusRefreshAt == null
-                                  ? 'Guncellenmedi'
-                                  : 'Son: ${_lastBusRefreshAt!.hour.toString().padLeft(2, '0')}:${_lastBusRefreshAt!.minute.toString().padLeft(2, '0')}:${_lastBusRefreshAt!.second.toString().padLeft(2, '0')}',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Color(0xFF444444),
-                              ),
-                            ),
-                            if (_routeBusRecordCount > 0 &&
-                                _liveRouteBuses.isEmpty)
-                              const Padding(
-                                padding: EdgeInsets.only(top: 4),
-                                child: Text(
-                                  'API bu hatta konum vermiyor',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Color(0xFF9C2E1D),
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            const SizedBox(height: 4),
-                            InkWell(
-                              onTap: _refreshLiveBuses,
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.refresh, size: 14),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'Simdi yenile',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                          );
+                        },
                       ),
-                    ),
-                  ),
-                  if (_selectedStop != null)
-                    Positioned(
-                      top: 12,
-                      left: 12,
-                      right: 150,
-                      child: _SelectedStopInfoCard(
-                        stop: _selectedStop!,
-                        estimate: _arrivalByStopKey[_selectedStop!.key],
-                        currentRouteCode: widget.routeCode,
-                        currentDirection: _currentDirection,
-                        lastRefreshAt: _lastBusRefreshAt,
-                      ),
-                    ),
-                  if (_isLoading)
-                    Positioned.fill(
-                      child: Container(
-                        color: Colors.white.withValues(alpha: 0.55),
-                        alignment: Alignment.center,
-                        child: const CircularProgressIndicator(),
-                      ),
-                    ),
-                  if (_error != null)
-                    Positioned(
-                      top: 12,
-                      left: 12,
-                      right: 12,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFF1EE),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(10),
-                          child: Text(_error!),
-                        ),
-                      ),
-                    ),
-                ],
               ),
             ),
-            SizedBox(
-              height: 260,
-              child: Column(
-                children: [
-                  const TabBar(
-                    tabs: [
-                      Tab(text: 'Saatler'),
-                      Tab(text: 'Duraklar'),
-                      Tab(text: 'Araclar'),
-                    ],
-                  ),
-                  Expanded(
-                    child: TabBarView(
-                      children: [
-                        _ScheduleTab(
-                          schedules: _schedules,
-                        ),
-                        _StopsTab(
-                          stops: _stops,
-                          arrivalByStopKey: _arrivalByStopKey,
-                          lastRefreshAt: _lastBusRefreshAt,
-                        ),
-                        _VehiclesTab(
-                          buses: _liveRouteBuses,
-                          routeBusRecordCount: _routeBusRecordCount,
-                          lastRefreshAt: _lastBusRefreshAt,
-                          onRefresh: _refreshLiveBuses,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+          if (_isLoading)
+            Positioned.fill(
+              child: Container(
+                color: Colors.white.withValues(alpha: 0.55),
+                alignment: Alignment.center,
+                child: const CircularProgressIndicator(),
               ),
             ),
-          ],
-        ),
+          if (_error != null)
+            Positioned(
+              top: 12,
+              left: 12,
+              right: 12,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF1EE),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Text(_error!),
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -775,62 +737,6 @@ class _LineDetailPageState extends State<LineDetailPage> {
       return double.tryParse(value.replaceAll(',', '.'));
     }
     return null;
-  }
-
-  static List<Map<String, dynamic>> _extractAnyRecords(dynamic payload) {
-    final collected = <Map<String, dynamic>>[];
-
-    void walk(dynamic node, int depth) {
-      if (depth > 6 || node == null) {
-        return;
-      }
-
-      if (node is Map<String, dynamic>) {
-        collected.add(node);
-        for (final value in node.values) {
-          walk(value, depth + 1);
-        }
-        return;
-      }
-
-      if (node is List) {
-        for (final item in node) {
-          walk(item, depth + 1);
-        }
-      }
-    }
-
-    walk(payload, 0);
-    return collected;
-  }
-
-  static String? _extractTime(Map<String, dynamic> record) {
-    final direct = _readString(record, const [
-      'PassTime',
-      'passTime',
-      'Time',
-      'time',
-      'Saat',
-      'hour',
-      'arrivalTime',
-      'nextTime',
-    ]);
-    if (_looksLikeTime(direct)) {
-      return direct;
-    }
-
-    for (final value in record.values) {
-      final text = value?.toString() ?? '';
-      final match = RegExp(r'(?:[01]?\d|2[0-3]):[0-5]\d').firstMatch(text);
-      if (match != null) {
-        return match.group(0);
-      }
-    }
-    return null;
-  }
-
-  static bool _looksLikeTime(String value) {
-    return RegExp(r'^(?:[01]?\d|2[0-3]):[0-5]\d$').hasMatch(value.trim());
   }
 
   List<BusVehicle> _extractLiveBusesFromPathPayload(
@@ -1000,12 +906,17 @@ class _LineDetailPageState extends State<LineDetailPage> {
         : _stops.map((stop) => LatLng(stop.latitude, stop.longitude)).toList();
 
     if (points.isEmpty) {
-      _mapController.move(_resolveRouteCenter(), 12.8);
+      final center = _resolveRouteCenter();
+      _mapController.move(center, 12.8);
+      _lastMapCenter = center;
+      _lastMapZoom = 12.8;
       return;
     }
 
     if (points.length == 1) {
       _mapController.move(points.first, 15);
+      _lastMapCenter = points.first;
+      _lastMapZoom = 15;
       return;
     }
 
@@ -1038,208 +949,84 @@ class _LineDetailPageState extends State<LineDetailPage> {
         padding: const EdgeInsets.all(28),
       ),
     );
+    _lastMapCenter = LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2);
+    _lastMapZoom = 13.2;
   }
 
-  static Map<String, String> _extractStopNameById(
-      Map<String, dynamic> payload) {
-    final pathList = _asList(payload['pathList']);
-    final map = <String, String>{};
-
-    for (final item in pathList) {
-      if (item is! Map<String, dynamic>) {
-        continue;
-      }
-
-      final rawStops = _asList(item['busStopList']);
-      for (final rawStop in rawStops) {
-        if (rawStop is! Map<String, dynamic>) {
-          continue;
-        }
-
-        final stopId = _readString(rawStop, const ['stopId', 'StopId']);
-        final stopName = _readString(rawStop, const ['stopName', 'StopName']);
-        if (stopId.isNotEmpty && stopName.isNotEmpty) {
-          map[stopId] = stopName;
-        }
-      }
-    }
-
-    return map;
-  }
 }
 
-class _ScheduleTab extends StatelessWidget {
-  const _ScheduleTab({required this.schedules});
+class _VehicleFloatingCard extends StatelessWidget {
+  const _VehicleFloatingCard({
+    required this.bus,
+    required this.routeCode,
+    required this.direction,
+  });
 
-  final List<LineScheduleItem> schedules;
+  final BusVehicle bus;
+  final String routeCode;
+  final String direction;
 
   @override
   Widget build(BuildContext context) {
-    if (schedules.isEmpty) {
-      return const Center(
-        child: Text('Saat bilgisi bulunamadi.'),
-      );
-    }
+    final lat = bus.latitude?.toStringAsFixed(5) ?? '-';
+    final lon = bus.longitude?.toStringAsFixed(5) ?? '-';
 
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      itemCount: schedules.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final schedule = schedules[index];
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF6F9FF),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  schedule.stopName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+    return Material(
+      elevation: 4,
+      color: Colors.white.withValues(alpha: 0.97),
+      borderRadius: BorderRadius.circular(14),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.directions_bus, color: Color(0xFF0B5A25)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    bus.id.isEmpty ? 'Arac' : 'Arac ${bus.id}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
                 ),
-              ),
+                Text(
+                  direction == '1' ? 'Donus' : 'Gidis',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('Hat: $routeCode'),
+            if (bus.name.isNotEmpty)
               Text(
-                schedule.timeText,
-                style: const TextStyle(fontWeight: FontWeight.w700),
+                bus.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _StopsTab extends StatelessWidget {
-  const _StopsTab({
-    required this.stops,
-    required this.arrivalByStopKey,
-    required this.lastRefreshAt,
-  });
-
-  final List<LineStop> stops;
-  final Map<String, StopArrivalEstimate> arrivalByStopKey;
-  final DateTime? lastRefreshAt;
-
-  @override
-  Widget build(BuildContext context) {
-    final refreshLabel = lastRefreshAt == null
-        ? 'Guncellenmedi'
-        : '${lastRefreshAt!.hour.toString().padLeft(2, '0')}:${lastRefreshAt!.minute.toString().padLeft(2, '0')}:${lastRefreshAt!.second.toString().padLeft(2, '0')}';
-
-    if (stops.isEmpty) {
-      return const Center(
-        child: Text('Durak bilgisi bulunamadi.'),
-      );
-    }
-
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      itemCount: stops.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final stop = stops[index];
-        final estimate = arrivalByStopKey[stop.key];
-        return Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFFBF2),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 14,
-                backgroundColor: const Color(0xFFEAF2FF),
-                child:
-                    Text('${index + 1}', style: const TextStyle(fontSize: 12)),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      stop.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 4),
-                    if (estimate == null)
-                      Text(
-                        'Tahmini gelis verisi yok • Son: $refreshLabel',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Color(0xFF6A6A6A),
-                        ),
-                      )
-                    else
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          _EtaChip(
-                            label:
-                                'En yakin: ${estimate.nearestEtaMinutes} dk${estimate.nearestBusId.isEmpty ? '' : ' (Arac ${estimate.nearestBusId})'}',
-                            color: const Color(0xFFE8F5E9),
-                            textColor: const Color(0xFF175E2F),
-                          ),
-                          if (estimate.nextEtaMinutes != null)
-                            _EtaChip(
-                              label:
-                                  'Sonraki: ${estimate.nextEtaMinutes} dk${(estimate.nextBusId ?? '').isEmpty ? '' : ' (Arac ${estimate.nextBusId})'}',
-                              color: const Color(0xFFEAF2FF),
-                              textColor: const Color(0xFF164B9D),
-                            ),
-                          _EtaChip(
-                            label: 'Guncelleme: $refreshLabel',
-                            color: const Color(0xFFF5F5F5),
-                            textColor: const Color(0xFF555555),
-                          ),
-                        ],
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _EtaChip extends StatelessWidget {
-  const _EtaChip({
-    required this.label,
-    required this.color,
-    required this.textColor,
-  });
-
-  final String label;
-  final Color color;
-  final Color textColor;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(999),
+            Text('Konum: $lat, $lon'),
+          ],
+        ),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: textColor,
+    );
+  }
+}
+
+class _VehicleEmptyFloatingCard extends StatelessWidget {
+  const _VehicleEmptyFloatingCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 2,
+      color: Colors.white.withValues(alpha: 0.96),
+      borderRadius: BorderRadius.circular(14),
+      child: const Center(
+        child: Text(
+          'Canli arac bilgisi bekleniyor...',
+          style: TextStyle(fontWeight: FontWeight.w700),
         ),
       ),
     );
@@ -1253,6 +1040,7 @@ class _SelectedStopInfoCard extends StatelessWidget {
     required this.currentRouteCode,
     required this.currentDirection,
     required this.lastRefreshAt,
+    required this.onClose,
   });
 
   final LineStop stop;
@@ -1260,6 +1048,7 @@ class _SelectedStopInfoCard extends StatelessWidget {
   final String currentRouteCode;
   final String currentDirection;
   final DateTime? lastRefreshAt;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -1280,14 +1069,25 @@ class _SelectedStopInfoCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              stop.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    stop.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: onClose,
+                  icon: const Icon(Icons.close, size: 18),
+                  tooltip: 'Detayi kapat',
+                ),
+              ],
             ),
             const SizedBox(height: 4),
             Text(
@@ -1316,146 +1116,6 @@ class _SelectedStopInfoCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _VehiclesTab extends StatelessWidget {
-  const _VehiclesTab({
-    required this.buses,
-    required this.routeBusRecordCount,
-    required this.lastRefreshAt,
-    required this.onRefresh,
-  });
-
-  final List<BusVehicle> buses;
-  final int routeBusRecordCount;
-  final DateTime? lastRefreshAt;
-  final VoidCallback onRefresh;
-
-  @override
-  Widget build(BuildContext context) {
-    final timeLabel = lastRefreshAt == null
-        ? 'Guncellenmedi'
-        : '${lastRefreshAt!.hour.toString().padLeft(2, '0')}:${lastRefreshAt!.minute.toString().padLeft(2, '0')}:${lastRefreshAt!.second.toString().padLeft(2, '0')}';
-
-    if (buses.isEmpty) {
-      return ListView(
-        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF6F9FF),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Canli arac verisi su anda yok.',
-                  style: TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 6),
-                Text('Son yenileme: $timeLabel'),
-                const SizedBox(height: 6),
-                Text('Hatta bulunan kayit sayisi: $routeBusRecordCount'),
-                if (routeBusRecordCount > 0)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 6),
-                    child: Text(
-                      'Bu hatta kayit var ancak API konum bilgisi vermiyor.',
-                      style: TextStyle(
-                        color: Color(0xFF9C2E1D),
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: onRefresh,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Yeniden dene'),
-                ),
-              ],
-            ),
-          ),
-        ],
-      );
-    }
-
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-      itemCount: buses.length + 1,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        if (index == 0) {
-          return Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFEFF8F1),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Canli arac: ${buses.length} • Son: $timeLabel',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                IconButton(
-                  onPressed: onRefresh,
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Yenile',
-                ),
-              ],
-            ),
-          );
-        }
-
-        final bus = buses[index - 1];
-        final lat = bus.latitude?.toStringAsFixed(6) ?? '-';
-        final lon = bus.longitude?.toStringAsFixed(6) ?? '-';
-
-        return Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF6F9FF),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Icon(
-                    Icons.directions_bus,
-                    color: Color(0xFF0B5A25),
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      bus.id.isEmpty ? 'Arac' : 'Arac ${bus.id}',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  if (bus.direction.isNotEmpty)
-                    Text(
-                      bus.direction == '1' ? 'Donus' : 'Gidis',
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text('Hat: ${bus.displayRouteCode.isEmpty ? '-' : bus.displayRouteCode}'),
-              if (bus.name.isNotEmpty) Text('Ad: ${bus.name}'),
-              Text('Konum: $lat, $lon'),
-            ],
-          ),
-        );
-      },
     );
   }
 }
@@ -1501,16 +1161,4 @@ class _BusEtaCandidate {
 
   final String busId;
   final int etaMinutes;
-}
-
-class LineScheduleItem {
-  const LineScheduleItem({
-    required this.busId,
-    required this.stopName,
-    required this.timeText,
-  });
-
-  final String busId;
-  final String stopName;
-  final String timeText;
 }

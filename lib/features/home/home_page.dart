@@ -10,8 +10,10 @@ import '../favorites/favorite_home_entry.dart';
 import '../favorites/favorite_route_detail_page.dart';
 import '../favorites/favorite_stop_item.dart';
 import '../favorites/favorites_controller.dart';
+import '../lines/line_detail_page.dart';
 import '../lines/trip_planner_page.dart';
 import '../shared/geo_math_utils.dart';
+import '../shared/kentkart_path_utils.dart';
 import '../shared/stop_live_summary_service.dart';
 import '../stops/stop_detail_page.dart';
 import '../stops/stop_picker_page.dart';
@@ -45,6 +47,11 @@ class _HomePageState extends State<HomePage> {
 
   List<BusVehicle> _liveBuses = <BusVehicle>[];
   List<TransitStop> _allStops = <TransitStop>[];
+  final Map<String, TransitStop> _catalogByStopId = <String, TransitStop>{};
+  Map<String, List<_HomeApproachingBus>> _routeAwareApproachingByStopId =
+      const <String, List<_HomeApproachingBus>>{};
+  bool _isLoadingRouteAwareApproaching = false;
+  String _homeStopEntrySignature = '';
   Position? _position;
   TransitStop? _nearestStop;
   StopLiveSummary? _nearestSummary;
@@ -59,7 +66,10 @@ class _HomePageState extends State<HomePage> {
       _requestPosition();
       _refreshTimer = Timer.periodic(
         const Duration(seconds: 35),
-        (_) => _refreshDashboard(silent: true),
+        (_) {
+          _refreshDashboard(silent: true);
+          _refreshHomeApproachingForVisibleStops(silent: true);
+        },
       );
     }
   }
@@ -131,6 +141,9 @@ class _HomePageState extends State<HomePage> {
       }
       if (stops != null) {
         _allStops = stops;
+        _catalogByStopId
+          ..clear()
+          ..addEntries(stops.map((stop) => MapEntry(stop.stopId, stop)));
       }
       _rebuildNearestStop();
 
@@ -146,6 +159,7 @@ class _HomePageState extends State<HomePage> {
     });
 
     _scheduleWarmupRetryIfNeeded();
+    _refreshHomeApproachingForVisibleStops(silent: true);
   }
 
   Future<void> _requestPosition() async {
@@ -248,7 +262,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  List<_HomeApproachingBus> _buildApproachingForStop(FavoriteStopItem stop) {
+  List<_HomeApproachingBus> _buildFallbackApproachingForStop(FavoriteStopItem stop) {
     final list = <_HomeApproachingBus>[];
     for (final bus in _liveBuses) {
       if (!bus.hasLocation) {
@@ -284,12 +298,242 @@ class _HomePageState extends State<HomePage> {
     return list.take(3).toList(growable: false);
   }
 
+  Future<void> _refreshHomeApproachingForVisibleStops({bool silent = false}) async {
+    final stops = widget.favoritesController.homeEntries
+        .where((entry) => entry.kind == FavoriteHomeEntryKind.stop)
+        .map((entry) => entry.stop)
+        .whereType<FavoriteStopItem>()
+        .toList(growable: false);
+
+    if (stops.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _routeAwareApproachingByStopId = const <String, List<_HomeApproachingBus>>{};
+          _isLoadingRouteAwareApproaching = false;
+        });
+      }
+      return;
+    }
+
+    if (!silent && mounted) {
+      setState(() {
+        _isLoadingRouteAwareApproaching = true;
+      });
+    }
+
+    try {
+      if (_catalogByStopId.isEmpty) {
+        final catalog = await _apiService.fetchAllStopsCatalog();
+        _catalogByStopId
+          ..clear()
+          ..addEntries(catalog.map((stop) => MapEntry(stop.stopId, stop)));
+      }
+
+      final fallback = <String, List<_HomeApproachingBus>>{};
+      for (final stop in stops) {
+        fallback[stop.stopId] = _buildFallbackApproachingForStop(stop);
+      }
+
+      if (mounted) {
+        setState(() {
+          _routeAwareApproachingByStopId = fallback;
+        });
+      }
+
+      final result = <String, List<_HomeApproachingBus>>{};
+      for (final stop in stops) {
+        final routeAware = await _loadRouteAwareApproachingForStop(stop);
+        result[stop.stopId] = routeAware.isNotEmpty
+            ? routeAware
+            : (fallback[stop.stopId] ?? const <_HomeApproachingBus>[]);
+      }
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _routeAwareApproachingByStopId = result;
+        _isLoadingRouteAwareApproaching = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isLoadingRouteAwareApproaching = false;
+      });
+    }
+  }
+
+  Future<List<_HomeApproachingBus>> _loadRouteAwareApproachingForStop(
+    FavoriteStopItem stop,
+  ) async {
+    final routeCodes = _resolveRouteCodesForFavoriteStop(stop);
+    if (routeCodes.isEmpty) {
+      return const <_HomeApproachingBus>[];
+    }
+
+    final rawApproaching = <_HomeApproachingBus>[];
+    final dedupeKeys = <String>{};
+
+    for (final routeCode in routeCodes) {
+      for (final direction in const <String>['0', '1']) {
+        try {
+          final response = await _apiService.fetchKentkartPathInfo(
+            displayRouteCode: routeCode,
+            direction: direction,
+          );
+          final payload = response is Map<String, dynamic>
+              ? response
+              : <String, dynamic>{'data': response};
+
+          for (final path in KentkartPathUtils.asList(payload['pathList'])) {
+            if (path is! Map<String, dynamic>) {
+              continue;
+            }
+
+            final points = KentkartPathUtils.extractPathPoints(path);
+            if (points.length < 2) {
+              continue;
+            }
+
+            final stopPointIndex = GeoMathUtils.nearestPointIndex(
+              points,
+              stop.latitude,
+              stop.longitude,
+            );
+            if (stopPointIndex < 0 || stopPointIndex >= points.length - 1) {
+              continue;
+            }
+
+            final busStopList = KentkartPathUtils.asList(path['busStopList']);
+            final selectedStopIdx =
+                KentkartPathUtils.findStopIndex(busStopList, stop.stopId);
+            if (selectedStopIdx < 0) {
+              continue;
+            }
+
+            final buses = KentkartPathUtils.extractBuses(path, routeCode, direction);
+            for (final bus in buses) {
+              if (!bus.hasLocation) {
+                continue;
+              }
+
+              final busPointIndex = GeoMathUtils.nearestPointIndex(
+                points,
+                bus.latitude!,
+                bus.longitude!,
+              );
+              if (busPointIndex < 0 || busPointIndex > stopPointIndex) {
+                continue;
+              }
+
+              final etaMinutes = (GeoMathUtils.distanceMeters(
+                        bus.latitude!,
+                        bus.longitude!,
+                        stop.latitude,
+                        stop.longitude,
+                      ) /
+                      _etaMetersPerMinute)
+                  .clamp(1, 180)
+                  .round();
+
+              final routeLabel = bus.displayRouteCode.isNotEmpty
+                  ? bus.displayRouteCode
+                  : (bus.routeCode.isNotEmpty ? bus.routeCode : '?');
+              final directionLabel = bus.direction == '1' ? 'Donus' : 'Gidis';
+              final vehicleCode = bus.id.isNotEmpty
+                  ? bus.id
+                  : (bus.name.isNotEmpty ? bus.name : '-');
+
+              final dedupe = '$routeLabel|$directionLabel|$vehicleCode';
+              if (!dedupeKeys.add(dedupe)) {
+                continue;
+              }
+
+              rawApproaching.add(
+                _HomeApproachingBus(
+                  routeCode: routeLabel,
+                  direction: directionLabel,
+                  etaMinutes: etaMinutes,
+                  vehicle: vehicleCode,
+                ),
+              );
+            }
+          }
+        } catch (_) {
+          continue;
+        }
+      }
+    }
+
+    rawApproaching.sort((a, b) {
+      final etaCompare = a.etaMinutes.compareTo(b.etaMinutes);
+      if (etaCompare != 0) {
+        return etaCompare;
+      }
+      final routeCompare = a.routeCode.compareTo(b.routeCode);
+      if (routeCompare != 0) {
+        return routeCompare;
+      }
+      return a.vehicle.compareTo(b.vehicle);
+    });
+
+    return rawApproaching.take(3).toList(growable: false);
+  }
+
+  List<String> _resolveRouteCodesForFavoriteStop(FavoriteStopItem stop) {
+    final exact = (_catalogByStopId[stop.stopId]?.routes ?? const <String>[])
+        .where((route) => route.trim().isNotEmpty)
+        .toList(growable: false);
+    if (exact.isNotEmpty) {
+      return exact.take(8).toList(growable: false);
+    }
+
+    TransitStop? nearest;
+    var nearestMeters = double.infinity;
+    for (final candidate in _catalogByStopId.values) {
+      final meters = GeoMathUtils.distanceMeters(
+        stop.latitude,
+        stop.longitude,
+        candidate.latitude,
+        candidate.longitude,
+      );
+      if (meters < nearestMeters) {
+        nearest = candidate;
+        nearestMeters = meters;
+      }
+    }
+
+    if (nearest == null || nearestMeters > 180) {
+      return const <String>[];
+    }
+
+    return nearest.routes
+        .where((route) => route.trim().isNotEmpty)
+        .take(8)
+        .toList(growable: false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: widget.favoritesController,
       builder: (context, _) {
         final entries = widget.favoritesController.homeEntries;
+        final stopSignature = entries
+            .where((entry) => entry.kind == FavoriteHomeEntryKind.stop)
+            .map((entry) => entry.stop?.stopId ?? '')
+            .join('|');
+        if (stopSignature != _homeStopEntrySignature) {
+          _homeStopEntrySignature = stopSignature;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _refreshHomeApproachingForVisibleStops(silent: true);
+            }
+          });
+        }
 
         return Scaffold(
           appBar: AppBar(
@@ -410,7 +654,8 @@ class _HomePageState extends State<HomePage> {
                                       )
                                     : null,
                                 approachingBuses: entry.kind == FavoriteHomeEntryKind.stop
-                                    ? _buildApproachingForStop(entry.stop!)
+                                    ? (_routeAwareApproachingByStopId[entry.stop!.stopId] ??
+                                        _buildFallbackApproachingForStop(entry.stop!))
                                     : const <_HomeApproachingBus>[],
                                 onTap: () {
                                   _openFavoriteEntry(entry);
@@ -419,6 +664,11 @@ class _HomePageState extends State<HomePage> {
                             );
                           },
                         ),
+                      ),
+                    if (_isLoadingRouteAwareApproaching)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 8),
+                        child: LinearProgressIndicator(minHeight: 2),
                       ),
                     const SizedBox(height: 18),
                     _QuickActionsRow(
@@ -443,7 +693,20 @@ class _HomePageState extends State<HomePage> {
   void _openFavoriteEntry(FavoriteHomeEntry entry) {
     switch (entry.kind) {
       case FavoriteHomeEntryKind.line:
-        widget.onOpenLines();
+        final line = entry.line;
+        if (line == null) {
+          widget.onOpenLines();
+          break;
+        }
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => LineDetailPage(
+              routeCode: line.routeCode,
+              routeName: line.routeName,
+              direction: '0',
+            ),
+          ),
+        );
         break;
       case FavoriteHomeEntryKind.stop:
         Navigator.of(context).push(
