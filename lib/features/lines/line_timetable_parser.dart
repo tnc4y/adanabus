@@ -30,7 +30,8 @@ class TimetableTimesList extends StatelessWidget {
           margin: const EdgeInsets.only(bottom: 8),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: isNearest ? const Color(0xFFE8F5E9) : const Color(0xFFF6F8FC),
+            color:
+                isNearest ? const Color(0xFFE8F5E9) : const Color(0xFFF6F8FC),
             borderRadius: BorderRadius.circular(10),
             border: isNearest
                 ? Border.all(color: const Color(0xFF1B7F43), width: 1.2)
@@ -76,6 +77,7 @@ class TimetableData {
   const TimetableData({
     required this.fromStop,
     required this.toStop,
+    required this.apiUpdatedAt,
     required this.weekdayTimes,
     required this.saturdayTimes,
     required this.sundayTimes,
@@ -83,17 +85,21 @@ class TimetableData {
 
   final String fromStop;
   final String toStop;
+  final DateTime? apiUpdatedAt;
   final List<String> weekdayTimes;
   final List<String> saturdayTimes;
   final List<String> sundayTimes;
 
   bool get hasAnyTimes =>
-      weekdayTimes.isNotEmpty || saturdayTimes.isNotEmpty || sundayTimes.isNotEmpty;
+      weekdayTimes.isNotEmpty ||
+      saturdayTimes.isNotEmpty ||
+      sundayTimes.isNotEmpty;
 
   factory TimetableData.empty() {
     return const TimetableData(
       fromStop: '',
       toStop: '',
+      apiUpdatedAt: null,
       weekdayTimes: <String>[],
       saturdayTimes: <String>[],
       sundayTimes: <String>[],
@@ -131,6 +137,7 @@ class TimetableDataParser {
     final weekday = <String>{};
     final saturday = <String>{};
     final sunday = <String>{};
+    final apiUpdatedAt = _extractApiUpdatedAt(payload);
     String from = '';
     String to = '';
 
@@ -167,6 +174,7 @@ class TimetableDataParser {
     return TimetableData(
       fromStop: from.isEmpty ? fallbackFrom : from,
       toStop: to.isEmpty ? fallbackTo : to,
+      apiUpdatedAt: apiUpdatedAt,
       weekdayTimes: _sortTimes(weekday),
       saturdayTimes: _sortTimes(saturday),
       sundayTimes: _sortTimes(sunday),
@@ -253,7 +261,8 @@ class TimetableDataParser {
     return node.keys.map((e) => e.toString().toLowerCase()).join(' ');
   }
 
-  static TimetableDayBucket _bucketFromSection(TimetableScheduleSection section) {
+  static TimetableDayBucket _bucketFromSection(
+      TimetableScheduleSection section) {
     final dayType = _findDayTypeValue(section.node);
     if (dayType == 0) {
       return TimetableDayBucket.weekday;
@@ -395,5 +404,109 @@ class TimetableDataParser {
       return am.compareTo(bm);
     });
     return list;
+  }
+
+  static DateTime? _extractApiUpdatedAt(dynamic node) {
+    final found = <DateTime>[];
+
+    void walk(dynamic value, {String keyPath = ''}) {
+      if (value is Map) {
+        for (final entry in value.entries) {
+          final key = entry.key.toString();
+          final nextPath = keyPath.isEmpty ? key : '$keyPath.$key';
+          if (_looksLikeUpdateKey(nextPath)) {
+            final parsed = _parseDateCandidate(entry.value);
+            if (parsed != null) {
+              found.add(parsed);
+            }
+          }
+          walk(entry.value, keyPath: nextPath);
+        }
+        return;
+      }
+
+      if (value is List) {
+        for (final item in value) {
+          walk(item, keyPath: keyPath);
+        }
+      }
+    }
+
+    walk(node);
+    if (found.isEmpty) {
+      return null;
+    }
+    found.sort((a, b) => b.compareTo(a));
+    return found.first;
+  }
+
+  static bool _looksLikeUpdateKey(String keyPath) {
+    final k = keyPath.toLowerCase().replaceAll('_', '');
+    return k.contains('update') ||
+        k.contains('updated') ||
+        k.contains('timestamp') ||
+        k.contains('created') ||
+        k.contains('modified') ||
+        k.contains('guncel') ||
+        k.contains('last');
+  }
+
+  static DateTime? _parseDateCandidate(dynamic raw) {
+    if (raw == null) {
+      return null;
+    }
+
+    if (raw is num) {
+      final value = raw.toInt();
+      if (value <= 0) {
+        return null;
+      }
+      if (value > 9999999999) {
+        return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true)
+            .toLocal();
+      }
+      return DateTime.fromMillisecondsSinceEpoch(value * 1000, isUtc: true)
+          .toLocal();
+    }
+
+    final text = raw.toString().trim();
+    if (text.isEmpty) {
+      return null;
+    }
+
+    final parsedIso = DateTime.tryParse(text);
+    if (parsedIso != null) {
+      return parsedIso.toLocal();
+    }
+
+    final normalized = text.replaceAll('/', '.').replaceAll('-', '.');
+    final fullDate = RegExp(
+      r'^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$',
+    ).firstMatch(normalized);
+    if (fullDate != null) {
+      final day = int.tryParse(fullDate.group(1)!);
+      final month = int.tryParse(fullDate.group(2)!);
+      final year = int.tryParse(fullDate.group(3)!);
+      final hour = int.tryParse(fullDate.group(4) ?? '0') ?? 0;
+      final minute = int.tryParse(fullDate.group(5) ?? '0') ?? 0;
+      final second = int.tryParse(fullDate.group(6) ?? '0') ?? 0;
+      if (day != null && month != null && year != null) {
+        return DateTime(year, month, day, hour, minute, second);
+      }
+    }
+
+    final clockOnly =
+        RegExp(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$').firstMatch(text);
+    if (clockOnly != null) {
+      final hour = int.tryParse(clockOnly.group(1)!);
+      final minute = int.tryParse(clockOnly.group(2)!);
+      final second = int.tryParse(clockOnly.group(3) ?? '0') ?? 0;
+      if (hour != null && minute != null) {
+        final now = DateTime.now();
+        return DateTime(now.year, now.month, now.day, hour, minute, second);
+      }
+    }
+
+    return null;
   }
 }
